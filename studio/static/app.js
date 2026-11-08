@@ -466,6 +466,7 @@ function showDetail() {
   const multiple = figures.length > 1;
   detailPrev.hidden = !multiple;
   detailNext.hidden = !multiple;
+  detail.classList.toggle("landscape", Number(settings.width) > Number(settings.height));
   detailImage.src = image.url;
   detailFacts.replaceChildren(
     fact("創作タイプ", "テキストから画像"),
