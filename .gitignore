@@ -1,0 +1,11 @@
+# ComfyUI 本体、仮想環境、生成した画像
+ComfyUI/
+
+# チェックポイントと LoRA 本体
+Lora/chekpoint/
+Lora/*.safetensors
+models/
+
+# Python の一時ファイル
+__pycache__/
+*.pyc

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Atelier R</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <aside class="side">
+    <header class="brand">
+      <p class="eyebrow">SDXL</p>
+      <h1>Atelier R</h1>
+    </header>
+
+    <section>
+      <label for="checkpoint">基礎モデル</label>
+      <select id="checkpoint"></select>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <span class="label">LoRA</span>
+      </div>
+      <select id="lora">
+        <option value="">追加する</option>
+      </select>
+      <div id="lora-panel" class="lora-card" hidden>
+        <div class="lora-top">
+          <img id="lora-preview" alt="">
+          <div>
+            <strong id="lora-name"></strong>
+            <button id="lora-remove" type="button" aria-label="LoRA を外す">×</button>
+          </div>
+        </div>
+        <div class="strength-row">
+          <input id="strength" type="range" min="0" max="2" step="0.1" value="1">
+          <input id="strength-number" type="number" min="0" max="2" step="0.1" value="1">
+        </div>
+        <div class="trigger-head">
+          <span>Trigger Words</span>
+          <button id="use-all-triggers" type="button">すべて使用</button>
+        </div>
+        <div id="trigger-list" class="trigger-list"></div>
+        <p class="hint">言葉をクリックすると、中央の入力欄に追加されます。</p>
+      </div>
+    </section>
+
+    <section>
+      <span class="label">縦横比</span>
+      <div class="ratio-labels"><span>縦向き</span><span>横向き</span></div>
+      <div id="ratios" class="ratio-grid"></div>
+      <div class="size-pick">
+        <div class="orient" role="group" aria-label="向き">
+          <button id="orient-portrait" type="button" class="choice" data-orient="portrait" aria-pressed="true">縦</button>
+          <button id="orient-landscape" type="button" class="choice" data-orient="landscape" aria-pressed="false">横</button>
+        </div>
+        <select id="resolution" aria-label="解像度">
+          <option value="">解像度</option>
+          <option value="fhd">FHD</option>
+          <option value="wqhd">WQHD</option>
+          <option value="4k">4K</option>
+          <option value="8k">8K</option>
+        </select>
+      </div>
+      <div id="custom-size" class="custom-size">
+        <label>幅<input id="custom-width" type="number" min="512" max="7680" step="8" value="768"></label>
+        <label>高さ<input id="custom-height" type="number" min="512" max="7680" step="8" value="1344"></label>
+      </div>
+      <p class="hint">1536を超える辺は、描いたあと指定サイズまで拡大します。最大は8K（7680×4320）です。</p>
+    </section>
+
+    <section>
+      <label class="label" for="count">一度に作る枚数</label>
+      <input id="count" class="count-input" type="number" min="1" max="99" step="1" value="1" inputmode="numeric">
+    </section>
+  </aside>
+
+  <main>
+    <p id="status" class="status">準備を確認しています...</p>
+    <form id="composer">
+      <label for="prompt">描きたい内容</label>
+      <textarea id="prompt" rows="5" placeholder="例: 1girl, solo, upper body, looking at viewer, soft smile, red dress, simple background"></textarea>
+      <details>
+        <summary>避けたい内容（任意）</summary>
+        <textarea id="negative" rows="3">worst quality, low quality, bad anatomy, bad hands, missing fingers, extra digits, text, watermark, blurry</textarea>
+      </details>
+      <button id="generate" type="submit">生成する</button>
+      <div id="progress-wrap" class="progress-wrap" hidden>
+        <div class="progress-track"><div id="progress-bar"></div></div>
+        <p id="progress-label"></p>
+      </div>
+    </form>
+    <p class="save-note">生成した画像は自動で <code id="output-dir"></code> に保存されます。<button id="open-folder" type="button">フォルダを開く</button></p>
+    <section id="gallery" class="gallery" aria-live="polite"></section>
+  </main>
+  <dialog id="detail">
+    <button id="detail-scrim" type="button" aria-label="閉じる"></button>
+    <div class="detail-layout">
+      <div class="detail-stage">
+        <button id="detail-prev" type="button" aria-label="前の画像" hidden>‹</button>
+        <img id="detail-image" alt="生成した画像">
+        <button id="detail-next" type="button" aria-label="次の画像" hidden>›</button>
+      </div>
+      <div class="detail-side">
+        <button id="detail-close" type="button" aria-label="閉じる">×</button>
+        <h2>生成条件</h2>
+        <dl id="detail-facts"></dl>
+        <p id="detail-prompt"></p>
+        <button id="detail-rerun" type="button">同じ条件で再生成</button>
+        <button id="detail-folder" type="button">保存フォルダを開く</button>
+      </div>
+    </div>
+  </dialog>
+  <script src="/app.js"></script>
+</body>
+</html>
