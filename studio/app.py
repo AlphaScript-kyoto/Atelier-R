@@ -70,6 +70,10 @@ MIN_SIDE = 512
 MAX_SIDE = 7680
 MAX_PIXELS = 7680 * 4320
 DIRECT_LONG_SIDE = 1536
+# 拡大後の画像を1枚あたり幅×高さ×12バイトで持つ。合計4GBを超える枚数は受け付けない。
+BYTES_PER_PIXEL = 12
+MAX_OUTPUT_BYTES = 4 * 1024 * 1024 * 1024
+ALLOWED_ORIGIN = f"http://{STUDIO_HOST}:{STUDIO_PORT}"
 
 _comfy_process: subprocess.Popen | None = None
 _jobs: dict[str, dict] = {}
@@ -82,6 +86,12 @@ def comfy_is_up() -> bool:
             return response.status == 200
     except (OSError, urllib.error.URLError):
         return False
+
+
+def port_is_open(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.4)
+        return sock.connect_ex((STUDIO_HOST, port)) == 0
 
 
 APP_NAME = "Atelier R"
@@ -137,14 +147,19 @@ def comfy_json(method: str, path: str, payload: dict | None = None, timeout: int
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
         raise RuntimeError(detail or error.reason) from error
+    except (urllib.error.URLError, TimeoutError) as error:
+        raise RuntimeError("画像エンジンに接続できませんでした。") from error
 
 
 def list_options() -> dict:
-    ready = comfy_is_up()
-    if not ready:
-        return {"ready": False, "checkpoints": [], "loras": [], "ratios": RATIOS, "output_dir": str(OUTPUT_DIR)}
-    checkpoints = comfy_json("GET", "/models/checkpoints")
-    loras = comfy_json("GET", "/models/loras")
+    not_ready = {"ready": False, "checkpoints": [], "loras": [], "ratios": RATIOS, "output_dir": str(OUTPUT_DIR)}
+    if not comfy_is_up():
+        return not_ready
+    try:
+        checkpoints = comfy_json("GET", "/models/checkpoints")
+        loras = comfy_json("GET", "/models/loras")
+    except RuntimeError:
+        return not_ready
     return {
         "ready": True,
         "checkpoints": [
@@ -190,6 +205,8 @@ def build_graph(body: dict) -> tuple[dict, int]:
         raise ValueError("枚数と LoRA の強さを確認してください。") from error
     if count < 1 or count > 99:
         raise ValueError("一度に作れる枚数は 1 枚から 99 枚です。")
+    if width * height * count * BYTES_PER_PIXEL > MAX_OUTPUT_BYTES:
+        raise ValueError("このサイズと枚数の組み合わせはメモリが足りなくなります。枚数を減らすか、解像度を下げてください。")
     if strength < 0 or strength > 2:
         raise ValueError("LoRA の強さは 0 から 2 の間にしてください。")
 
@@ -312,6 +329,12 @@ def sampling_size(width: int, height: int) -> tuple[int, int]:
     return draw_width, draw_height
 
 
+def forget_progress(prompt_id: str) -> None:
+    with _jobs_lock:
+        _progress_state.pop(prompt_id, None)
+        _stage.pop(prompt_id, None)
+
+
 def running_status(prompt_id: str, known: dict) -> dict:
     with _jobs_lock:
         progress = dict(_progress_state.get(prompt_id) or {})
@@ -334,6 +357,8 @@ def remember_job(prompt_id: str, seed: int) -> None:
             oldest = sorted(_jobs.items(), key=lambda item: item[1]["created"])[:-40]
             for key, _ in oldest:
                 _jobs.pop(key, None)
+                _progress_state.pop(key, None)
+                _stage.pop(key, None)
 
 
 def job_status(prompt_id: str) -> dict:
@@ -354,6 +379,7 @@ def job_status(prompt_id: str) -> dict:
         for entry in status.get("messages") or []:
             if isinstance(entry, list) and len(entry) > 1 and isinstance(entry[1], dict):
                 message = str(entry[1].get("exception_message") or message)
+        forget_progress(prompt_id)
         return {"state": "error", "message": message, "seed": known["seed"]}
     images = []
     for node in (item.get("outputs") or {}).values():
@@ -376,6 +402,7 @@ def job_status(prompt_id: str) -> dict:
             })
     if not images and not status.get("completed"):
         return running_status(prompt_id, known)
+    forget_progress(prompt_id)
     return {"state": "done", "seed": known["seed"], "images": images, "output_dir": str(OUTPUT_DIR)}
 
 
@@ -403,9 +430,42 @@ class StudioHandler(BaseHTTPRequestHandler):
             return
         self.send_static(parsed.path)
 
+    def request_from_studio(self) -> bool:
+        host = (self.headers.get("Host") or "").split(",")[0].strip().lower()
+        origin = (self.headers.get("Origin") or "").strip().rstrip("/")
+        return host == f"{STUDIO_HOST}:{STUDIO_PORT}" and origin == ALLOWED_ORIGIN
+
+    def read_json_object(self) -> dict | None:
+        if not self.request_from_studio():
+            self.send_json({"error": "この操作は Atelier R の画面からだけ受け付けます。"}, status=403)
+            return None
+        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if content_type != "application/json":
+            self.send_json({"error": "送信形式が正しくありません。"}, status=415)
+            return None
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self.send_json({"error": "送信内容を読めませんでした。"}, status=400)
+            return None
+        if length < 0 or length > 100_000:
+            self.send_json({"error": "送信データが大きすぎます。"}, status=400)
+            return None
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.send_json({"error": "送信内容を読めませんでした。"}, status=400)
+            return None
+        if not isinstance(body, dict):
+            self.send_json({"error": "送信内容を読めませんでした。"}, status=400)
+            return None
+        return body
+
     def do_POST(self) -> None:
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/open-folder":
+            if self.read_json_object() is None:
+                return
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
             os.startfile(OUTPUT_DIR)
             self.send_json({"ok": True, "path": str(OUTPUT_DIR)})
@@ -413,12 +473,10 @@ class StudioHandler(BaseHTTPRequestHandler):
         if path != "/api/generate":
             self.send_error(404)
             return
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > 100_000:
-            self.send_json({"error": "送信データが大きすぎます。"}, status=400)
+        body = self.read_json_object()
+        if body is None:
             return
         try:
-            body = json.loads(self.rfile.read(length).decode("utf-8"))
             graph, seed = build_graph(body)
             result = comfy_json("POST", "/prompt", {"prompt": graph, "client_id": CLIENT_ID})
         except ValueError as error:
@@ -427,9 +485,6 @@ class StudioHandler(BaseHTTPRequestHandler):
             return
         except RuntimeError as error:
             self.send_json({"error": "生成を開始できませんでした。" + str(error)[:300]}, status=502)
-            return
-        except json.JSONDecodeError:
-            self.send_json({"error": "送信内容を読めませんでした。"}, status=400)
             return
         prompt_id = result.get("prompt_id")
         if not prompt_id or result.get("node_errors"):
@@ -515,31 +570,40 @@ def note_progress(message: dict) -> None:
                 _stage[prompt_id] = "準備しています"
 
 
-def read_ws_frame(sock: socket.socket, buf: bytes) -> tuple[tuple[int, bytes] | None, bytes]:
-    while len(buf) < 2:
+def take_bytes(sock: socket.socket, buf: bytes, size: int) -> bytes | None:
+    while len(buf) < size:
         chunk = sock.recv(65536)
         if not chunk:
-            return None, buf
+            return None
         buf += chunk
+    return buf
+
+
+def read_ws_frame(sock: socket.socket, buf: bytes) -> tuple[tuple[int, bytes] | None, bytes]:
+    buf = take_bytes(sock, buf, 2)
+    if buf is None:
+        return None, b""
     first, second = buf[0], buf[1]
     buf = buf[2:]
     opcode = first & 0x0F
     length = second & 0x7F
     if length == 126:
-        while len(buf) < 2:
-            buf += sock.recv(65536)
+        buf = take_bytes(sock, buf, 2)
+        if buf is None:
+            return None, b""
         length = struct.unpack("!H", buf[:2])[0]
         buf = buf[2:]
     elif length == 127:
-        while len(buf) < 8:
-            buf += sock.recv(65536)
+        buf = take_bytes(sock, buf, 8)
+        if buf is None:
+            return None, b""
         length = struct.unpack("!Q", buf[:8])[0]
         buf = buf[8:]
-    while len(buf) < length:
-        chunk = sock.recv(length - len(buf))
-        if not chunk:
-            return None, buf
-        buf += chunk
+    if length > 16_000_000:
+        return None, b""
+    buf = take_bytes(sock, buf, length)
+    if buf is None:
+        return None, b""
     return (opcode, buf[:length]), buf[length:]
 
 
@@ -649,14 +713,6 @@ def main() -> None:
         server.shutdown()
         server.server_close()
         stop_comfy_if_we_started()
-
-
-def port_is_open(port: int) -> bool:
-    import socket
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.4)
-        return sock.connect_ex((STUDIO_HOST, port)) == 0
 
 
 if __name__ == "__main__":

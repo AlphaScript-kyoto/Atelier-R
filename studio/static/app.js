@@ -233,8 +233,15 @@ customWidth.addEventListener("change", () => snapSize(customWidth));
 customHeight.addEventListener("change", () => snapSize(customHeight));
 
 async function loadOptions() {
-  const response = await fetch("/api/options");
-  const data = await response.json();
+  let data;
+  try {
+    const response = await fetch("/api/options");
+    data = await response.json();
+  } catch (error) {
+    statusLine.textContent = "画面の準備に失敗しました。もう一度確認しています。";
+    setTimeout(loadOptions, 2000);
+    return;
+  }
   if (data.output_dir) {
     outputFolder = data.output_dir;
     outputDir.textContent = data.output_dir;
@@ -348,10 +355,28 @@ form.addEventListener("submit", async (event) => {
 });
 
 async function waitForJob(promptId, settings) {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  let lastMark = "";
+  let lastChange = Date.now();
+  const stallLimit = 10 * 60 * 1000;
+  while (true) {
     await new Promise((resolve) => setTimeout(resolve, 700));
-    const response = await fetch(`/api/jobs/${promptId}`);
-    const job = await response.json();
+    let job;
+    try {
+      const response = await fetch(`/api/jobs/${promptId}`);
+      job = await response.json();
+    } catch (error) {
+      if (Date.now() - lastChange > stallLimit) {
+        throw new Error("進み具合が止まったままです。黒い画面にエラーが出ていないか見てください。");
+      }
+      continue;
+    }
+    const mark = `${job.state}:${job.stage || ""}:${job.value || 0}:${job.max || 0}`;
+    if (mark !== lastMark) {
+      lastMark = mark;
+      lastChange = Date.now();
+    } else if (Date.now() - lastChange > stallLimit) {
+      throw new Error("進み具合が止まったままです。黒い画面にエラーが出ていないか見てください。");
+    }
     if (job.state === "running") {
       showProgress(job);
       continue;
@@ -364,7 +389,6 @@ async function waitForJob(promptId, settings) {
     addSession(job.images, { ...settings, seed: job.seed });
     return;
   }
-  throw new Error("時間がかかりすぎました。黒い画面にエラーが出ていないか見てください。");
 }
 
 function appendPrompt(text) {
@@ -513,7 +537,11 @@ function applySettings(settings) {
 }
 
 async function openOutputFolder() {
-  await fetch("/api/open-folder", { method: "POST" });
+  await fetch("/api/open-folder", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
 }
 
 loadOptions();
