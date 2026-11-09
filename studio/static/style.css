@@ -268,6 +268,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 }
 
 .prompt-block,
+#extra-words,
 #negative-block,
 #generate,
 .progress-wrap {
@@ -275,6 +276,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 }
 
 .prompt-block { padding: 28px clamp(20px, 4vw, 56px) 0; }
+#extra-words { margin: 12px clamp(20px, 4vw, 56px) 0; }
+#extra-word-list { margin-top: 10px; }
 #negative-block { margin: 12px clamp(20px, 4vw, 56px) 16px; }
 #generate { margin-left: clamp(20px, 4vw, 56px); }
 .progress-wrap { margin: 14px clamp(20px, 4vw, 56px) 0; }
@@ -552,7 +555,7 @@ figcaption {
     background: #171a22;
     border-top: 1px solid var(--line);
   }
-  .side, .sheet-head, #negative-block, .prompt-block label { display: none; }
+  .side, .sheet-head, #negative-block, #extra-words, .prompt-block label { display: none; }
   .prompt-block { flex: 1; min-width: 0; padding: 0; }
   #prompt { height: 44px; min-height: 44px; }
   #generate {
@@ -621,7 +624,9 @@ figcaption {
     cursor: pointer;
   }
   body.sheet-open .prompt-block label,
-  body.sheet-open #negative-block { display: block; }
+  body.sheet-open #negative-block,
+  body.sheet-open #extra-words { display: block; }
+  body.sheet-open #extra-words { margin: 12px 0 0; }
   body.sheet-open #negative-block { margin: 12px 0; }
   body.sheet-open #prompt { height: auto; min-height: 96px; }
   body.sheet-open #generate {

@@ -93,9 +93,28 @@ function addTrigger(text) {
 }
 
 function paintTriggers() {
-  triggerList.querySelectorAll(".trigger").forEach((button) => {
+  document.querySelectorAll("#trigger-list .trigger, #extra-word-list .trigger").forEach((button) => {
     button.setAttribute("aria-pressed", String(promptBox.value.includes(button.dataset.trigger)));
   });
+}
+
+function renderExtraWords(words) {
+  const list = document.querySelector("#extra-word-list");
+  const empty = document.querySelector("#extra-word-empty");
+  list.replaceChildren();
+  const items = Array.isArray(words) ? words : [];
+  empty.hidden = items.length > 0;
+  items.forEach((text) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "trigger";
+    button.dataset.trigger = text;
+    button.title = text;
+    button.textContent = `${shortLabel(text)} ↑`;
+    button.addEventListener("click", () => addTrigger(text));
+    list.appendChild(button);
+  });
+  paintTriggers();
 }
 
 function showLora() {
@@ -251,6 +270,7 @@ async function loadOptions() {
     outputFolder = data.output_dir;
     outputDir.textContent = data.output_dir;
   }
+  renderExtraWords(data.extra_words);
   if (!data.ready) {
     statusLine.textContent = "画像エンジンを起動しています。30 秒ほど待ってください。";
     setTimeout(loadOptions, 2000);

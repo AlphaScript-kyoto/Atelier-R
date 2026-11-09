@@ -26,6 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 COMFY_DIR = ROOT / "ComfyUI"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+EXTRA_WORDS_PATH = Path(__file__).resolve().parent / "extra_words.txt"
 COMFY_URL = "http://127.0.0.1:8188"
 STUDIO_HOST = "127.0.0.1"
 STUDIO_PORT = 8189
@@ -207,8 +208,38 @@ def comfy_json(method: str, path: str, payload: dict | None = None, timeout: int
         raise RuntimeError("画像エンジンに接続できませんでした。") from error
 
 
+def read_extra_words() -> list[str]:
+    if not EXTRA_WORDS_PATH.is_file():
+        return []
+    try:
+        lines = EXTRA_WORDS_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    words = []
+    seen = set()
+    for line in lines:
+        word = line.strip()
+        if not word or word.startswith("#"):
+            continue
+        word = word[:200]
+        if word in seen:
+            continue
+        seen.add(word)
+        words.append(word)
+        if len(words) >= 300:
+            break
+    return words
+
+
 def list_options() -> dict:
-    not_ready = {"ready": False, "checkpoints": [], "loras": [], "ratios": RATIOS, "output_dir": str(OUTPUT_DIR)}
+    not_ready = {
+        "ready": False,
+        "checkpoints": [],
+        "loras": [],
+        "ratios": RATIOS,
+        "output_dir": str(OUTPUT_DIR),
+        "extra_words": read_extra_words(),
+    }
     if not comfy_is_up():
         return not_ready
     try:
@@ -233,6 +264,7 @@ def list_options() -> dict:
         ],
         "ratios": RATIOS,
         "output_dir": str(OUTPUT_DIR),
+        "extra_words": read_extra_words(),
     }
 
 
