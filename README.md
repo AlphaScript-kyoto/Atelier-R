@@ -64,7 +64,7 @@ http://100.86.109.80:8189
    - Holy Mix（`3_HolyMix_00002_.safetensors`）
    - EstellaXL（`2_EstellaXL.safetensors`）
    - AnimeMix v8（`1_animemixillustrious_v8.safetensors`）
-2. **LoRA** で Olivia von Ecclesia を選ぶと、強さのつまみと 4 つの言葉が出ます。強さは 0 から 2 です。言葉をクリックすると、中央の入力欄の後ろに足されます。**すべて使用** で 4 つまとめて足せます。選んだだけでは、文章の先頭には自動で入りません。
+2. **LoRA** で Olivia von Ecclesia を選ぶと、強さのつまみと 4 つの言葉が出ます。強さは 0 から 2 です。言葉をクリックすると、中央の入力欄の後ろに足されます。スマホでは、この言葉を押してもキーボードは出ません。キーボードは入力欄をタップしたときだけ出ます。**すべて使用** で 4 つまとめて足せます。選んだだけでは、文章の先頭には自動で入りません。
    - liv (long blonde wavy hair, emerald eyes)
    - red and black royal dress with gold trim
    - ornate black gauntlets on both arms

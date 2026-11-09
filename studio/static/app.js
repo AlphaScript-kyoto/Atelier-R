@@ -84,6 +84,11 @@ function addTrigger(text) {
   const current = promptBox.value.trim();
   promptBox.value = current ? `${current}, ${text}` : text;
   paintTriggers();
+  if (window.matchMedia("(max-width: 800px)").matches) {
+    promptBox.blur();
+    setTimeout(() => promptBox.blur(), 0);
+    return;
+  }
   promptBox.focus();
 }
 
