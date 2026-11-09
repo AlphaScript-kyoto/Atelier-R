@@ -345,6 +345,7 @@ form.addEventListener("submit", async (event) => {
     if (!response.ok) throw new Error(data.error || "生成を開始できませんでした。");
     settings.seed = data.seed;
     await waitForJob(data.prompt_id, settings);
+    setSheet(false);
   } catch (error) {
     statusLine.classList.add("error");
     statusLine.textContent = error.message;
@@ -418,15 +419,21 @@ function addSession(images, settings) {
   section.className = "session";
   const head = document.createElement("div");
   head.className = "session-head";
+  const copy = document.createElement("div");
+  copy.className = "session-copy";
   const label = document.createElement("p");
   label.className = "session-prompt";
   label.textContent = settings.prompt;
+  const meta = document.createElement("p");
+  meta.className = "session-meta";
+  meta.textContent = `${settings.checkpointName} · ${settings.width}×${settings.height}`;
+  copy.append(label, meta);
   const reuse = document.createElement("button");
   reuse.type = "button";
   reuse.className = "reuse-prompt";
   reuse.textContent = "プロンプトを再利用";
   reuse.addEventListener("click", () => appendPrompt(settings.prompt));
-  head.append(label, reuse);
+  head.append(copy, reuse);
   const row = document.createElement("div");
   row.className = "session-row";
   row.style.setProperty("--count", String(Math.max(images.length, 1)));
@@ -450,12 +457,57 @@ const detailNext = document.querySelector("#detail-next");
 let detailFigures = [];
 let detailIndex = 0;
 
+const phoneQuery = window.matchMedia("(max-width: 800px)");
+const isPhone = () => phoneQuery.matches;
+let savedScroll = 0;
+
+function syncScrollLock() {
+  const shouldLock = document.body.classList.contains("sheet-open") || detail.open;
+  const locked = document.body.classList.contains("scroll-lock");
+  if (shouldLock && !locked) {
+    savedScroll = window.scrollY;
+    document.body.style.top = `-${savedScroll}px`;
+    document.body.classList.add("scroll-lock");
+  } else if (!shouldLock && locked) {
+    document.body.classList.remove("scroll-lock");
+    document.body.style.top = "";
+    window.scrollTo(0, savedScroll);
+  }
+}
+
+function setSheet(open) {
+  document.body.classList.toggle("sheet-open", Boolean(open) && isPhone());
+  syncScrollLock();
+}
+
+function openSheetFromPrompt() {
+  if (isPhone()) setSheet(true);
+}
+promptBox.addEventListener("focus", openSheetFromPrompt);
+promptBox.addEventListener("pointerdown", openSheetFromPrompt);
+document.querySelector("#sheet-close").addEventListener("click", () => {
+  setSheet(false);
+  promptBox.blur();
+});
+document.querySelector("#sheet-scrim").addEventListener("click", () => {
+  setSheet(false);
+  promptBox.blur();
+});
+phoneQuery.addEventListener("change", () => setSheet(false));
+document.addEventListener("touchmove", (event) => {
+  if (!document.body.classList.contains("scroll-lock")) return;
+  if (event.target.closest(".side, #composer, .detail-side")) return;
+  event.preventDefault();
+}, { passive: false });
+
 function openDetail(figure) {
   const session = figure.closest(".session");
   detailFigures = [...session.querySelectorAll("figure")];
   detailIndex = detailFigures.indexOf(figure);
   showDetail();
+  detail.classList.remove("info-open");
   if (!detail.open) detail.showModal();
+  syncScrollLock();
 }
 
 function showDetail() {
@@ -472,6 +524,7 @@ function showDetail() {
     fact("創作タイプ", "テキストから画像"),
     fact("作成日時", settings.created),
     fact("比率", settings.ratioLabel),
+    fact("画像サイズ", `${settings.width}×${settings.height}`),
     fact("シード", String(settings.seed)),
     fact("サンプラー", "Euler a"),
     fact("ステップ", "28"),
@@ -495,6 +548,17 @@ function moveDetail(step) {
 detailPrev.addEventListener("click", () => moveDetail(-1));
 detailNext.addEventListener("click", () => moveDetail(1));
 document.querySelector("#detail-scrim").addEventListener("click", () => detail.close());
+document.querySelector("#detail-back").addEventListener("click", () => detail.close());
+document.querySelector("#detail-info").addEventListener("click", () => detail.classList.add("info-open"));
+document.querySelector("#detail-info-scrim").addEventListener("click", () => detail.close());
+document.querySelector(".detail-stage").addEventListener("click", (event) => {
+  if (!isPhone() || event.target.closest("button, img")) return;
+  detail.close();
+});
+detail.addEventListener("close", () => {
+  detail.classList.remove("info-open");
+  syncScrollLock();
+});
 detail.addEventListener("click", (event) => {
   if (event.target === detail) detail.close();
 });
@@ -508,7 +572,13 @@ detail.addEventListener("keydown", (event) => {
     moveDetail(-1);
   }
 });
-document.querySelector("#detail-close").addEventListener("click", () => detail.close());
+document.querySelector("#detail-close").addEventListener("click", () => {
+  if (isPhone()) {
+    detail.classList.remove("info-open");
+    return;
+  }
+  detail.close();
+});
 document.querySelector("#detail-folder").addEventListener("click", openOutputFolder);
 const onThisPc = location.hostname === "127.0.0.1" || location.hostname === "localhost";
 if (!onThisPc) {

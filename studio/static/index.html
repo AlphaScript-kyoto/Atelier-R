@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <button id="sheet-scrim" type="button" aria-label="入力を閉じる"></button>
+  <form id="composer">
   <aside class="side">
     <header class="brand">
       <p class="eyebrow">SDXL</p>
@@ -75,22 +77,26 @@
       <input id="count" class="count-input" type="number" min="1" max="99" step="1" value="1" inputmode="numeric">
     </section>
   </aside>
+    <div class="prompt-block">
+      <div class="sheet-head">
+        <button id="sheet-close" type="button">閉じる</button>
+      </div>
+      <label for="prompt">描きたい内容</label>
+      <textarea id="prompt" rows="5" placeholder="例: 1girl, solo, upper body, looking at viewer, soft smile, red dress, simple background"></textarea>
+    </div>
+    <details id="negative-block">
+      <summary>避けたい内容（任意）</summary>
+      <textarea id="negative" rows="3">worst quality, low quality, bad anatomy, bad hands, missing fingers, extra digits, text, watermark, blurry</textarea>
+    </details>
+    <button id="generate" type="submit">生成する</button>
+    <div id="progress-wrap" class="progress-wrap" hidden>
+      <div class="progress-track"><div id="progress-bar"></div></div>
+      <p id="progress-label"></p>
+    </div>
+  </form>
 
   <main>
     <p id="status" class="status">準備を確認しています...</p>
-    <form id="composer">
-      <label for="prompt">描きたい内容</label>
-      <textarea id="prompt" rows="5" placeholder="例: 1girl, solo, upper body, looking at viewer, soft smile, red dress, simple background"></textarea>
-      <details>
-        <summary>避けたい内容（任意）</summary>
-        <textarea id="negative" rows="3">worst quality, low quality, bad anatomy, bad hands, missing fingers, extra digits, text, watermark, blurry</textarea>
-      </details>
-      <button id="generate" type="submit">生成する</button>
-      <div id="progress-wrap" class="progress-wrap" hidden>
-        <div class="progress-track"><div id="progress-bar"></div></div>
-        <p id="progress-label"></p>
-      </div>
-    </form>
     <p class="save-note">生成した画像は自動で <code id="output-dir"></code> に保存されます。<button id="open-folder" type="button">フォルダを開く</button></p>
     <section id="gallery" class="gallery" aria-live="polite"></section>
   </main>
@@ -98,17 +104,24 @@
     <button id="detail-scrim" type="button" aria-label="閉じる"></button>
     <div class="detail-layout">
       <div class="detail-stage">
+        <button id="detail-back" type="button" aria-label="閉じる">←</button>
         <button id="detail-prev" type="button" aria-label="前の画像" hidden>‹</button>
         <img id="detail-image" alt="生成した画像">
         <button id="detail-next" type="button" aria-label="次の画像" hidden>›</button>
+        <div class="detail-toolbar">
+          <button id="detail-info" type="button" aria-label="生成条件">i</button>
+        </div>
       </div>
-      <div class="detail-side">
-        <button id="detail-close" type="button" aria-label="閉じる">×</button>
-        <h2>生成条件</h2>
-        <dl id="detail-facts"></dl>
-        <p id="detail-prompt"></p>
-        <button id="detail-rerun" type="button">同じ条件で再生成</button>
-        <button id="detail-folder" type="button">保存フォルダを開く</button>
+      <div id="detail-info-layer">
+        <button id="detail-info-scrim" type="button" aria-label="条件を閉じる"></button>
+        <div class="detail-side">
+          <button id="detail-close" type="button" aria-label="閉じる">×</button>
+          <h2>生成条件</h2>
+          <dl id="detail-facts"></dl>
+          <p id="detail-prompt"></p>
+          <button id="detail-rerun" type="button">同じ条件で再生成</button>
+          <button id="detail-folder" type="button">保存フォルダを開く</button>
+        </div>
       </div>
     </div>
   </dialog>
