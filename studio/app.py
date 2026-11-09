@@ -29,6 +29,8 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 COMFY_URL = "http://127.0.0.1:8188"
 STUDIO_HOST = "127.0.0.1"
 STUDIO_PORT = 8189
+TAILSCALE_IPV4: str | None = None
+TAILSCALE_DNS: str | None = None
 OUTPUT_DIR = COMFY_DIR / "output"
 CLIENT_ID = str(uuid.uuid4())
 _progress_state: dict[str, dict] = {}
@@ -73,7 +75,6 @@ DIRECT_LONG_SIDE = 1536
 # 拡大後の画像を1枚あたり幅×高さ×12バイトで持つ。合計4GBを超える枚数は受け付けない。
 BYTES_PER_PIXEL = 12
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024 * 1024
-ALLOWED_ORIGIN = f"http://{STUDIO_HOST}:{STUDIO_PORT}"
 
 _comfy_process: subprocess.Popen | None = None
 _jobs: dict[str, dict] = {}
@@ -86,6 +87,61 @@ def comfy_is_up() -> bool:
             return response.status == 200
     except (OSError, urllib.error.URLError):
         return False
+
+
+def is_tailscale_ipv4(address: str) -> bool:
+    parts = address.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        numbers = [int(part) for part in parts]
+    except ValueError:
+        return False
+    return numbers[0] == 100 and 64 <= numbers[1] <= 127 and all(0 <= number <= 255 for number in numbers)
+
+
+def refresh_tailscale_names() -> None:
+    """このPCの Tailscale アドレスを起動のたびに読み直します。"""
+    global TAILSCALE_IPV4, TAILSCALE_DNS
+    TAILSCALE_IPV4 = None
+    TAILSCALE_DNS = None
+    try:
+        ip_result = subprocess.run(
+            ["tailscale", "ip", "-4"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    lines = [line.strip() for line in (ip_result.stdout or "").splitlines() if line.strip()]
+    if ip_result.returncode == 0 and lines and is_tailscale_ipv4(lines[0]):
+        TAILSCALE_IPV4 = lines[0]
+    try:
+        status = subprocess.run(
+            ["tailscale", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if status.returncode == 0 and status.stdout:
+            payload = json.loads(status.stdout)
+            name = str((payload.get("Self") or {}).get("DNSName") or "").strip().rstrip(".").lower()
+            if name and "." in name:
+                TAILSCALE_DNS = name
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return
+
+
+def studio_hosts() -> set[str]:
+    hosts = {f"{STUDIO_HOST}:{STUDIO_PORT}"}
+    if TAILSCALE_IPV4:
+        hosts.add(f"{TAILSCALE_IPV4}:{STUDIO_PORT}")
+    if TAILSCALE_DNS:
+        hosts.add(f"{TAILSCALE_DNS}:{STUDIO_PORT}")
+    return hosts
 
 
 def port_is_open(port: int) -> bool:
@@ -430,14 +486,29 @@ class StudioHandler(BaseHTTPRequestHandler):
             return
         self.send_static(parsed.path)
 
-    def request_from_studio(self) -> bool:
-        host = (self.headers.get("Host") or "").split(",")[0].strip().lower()
-        origin = (self.headers.get("Origin") or "").strip().rstrip("/")
-        return host == f"{STUDIO_HOST}:{STUDIO_PORT}" and origin == ALLOWED_ORIGIN
+    def request_host(self) -> str:
+        return (self.headers.get("Host") or "").split(",")[0].strip().lower()
 
-    def read_json_object(self) -> dict | None:
-        if not self.request_from_studio():
-            self.send_json({"error": "この操作は Atelier R の画面からだけ受け付けます。"}, status=403)
+    def request_origin(self) -> str:
+        return (self.headers.get("Origin") or "").strip().rstrip("/").lower()
+
+    def from_local_screen(self) -> bool:
+        host = f"{STUDIO_HOST}:{STUDIO_PORT}"
+        return self.request_host() == host and self.request_origin() == f"http://{host}"
+
+    def from_studio_screen(self) -> bool:
+        host = self.request_host()
+        return host in studio_hosts() and self.request_origin() == f"http://{host}"
+
+    def read_json_object(self, *, local_only: bool = False) -> dict | None:
+        if local_only:
+            allowed = self.from_local_screen()
+            denied = "保存フォルダを開くのは、このPCの画面からだけです。"
+        else:
+            allowed = self.from_studio_screen()
+            denied = "この操作は Atelier R の画面からだけ受け付けます。"
+        if not allowed:
+            self.send_json({"error": denied}, status=403)
             return None
         content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if content_type != "application/json":
@@ -464,7 +535,7 @@ class StudioHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/open-folder":
-            if self.read_json_object() is None:
+            if self.read_json_object(local_only=True) is None:
                 return
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
             os.startfile(OUTPUT_DIR)
@@ -689,7 +760,21 @@ def notify_already_open() -> None:
     ctypes.windll.user32.MessageBoxW(None, message, APP_NAME, 0x00050040)
 
 
+def bind_studio_servers() -> list[ThreadingHTTPServer]:
+    ThreadingHTTPServer.allow_reuse_address = True
+    servers = [ThreadingHTTPServer((STUDIO_HOST, STUDIO_PORT), StudioHandler)]
+    if not TAILSCALE_IPV4:
+        print("Tailscale のアドレスが見つかりません。このPCの中からだけ開けます。", flush=True)
+        return servers
+    try:
+        servers.append(ThreadingHTTPServer((TAILSCALE_IPV4, STUDIO_PORT), StudioHandler))
+    except OSError as error:
+        print(f"スマホ向けの待ち受けを開けませんでした: {error}", flush=True)
+    return servers
+
+
 def main() -> None:
+    refresh_tailscale_names()
     if port_is_open(STUDIO_PORT):
         open_studio_page()
         notify_already_open()
@@ -697,21 +782,29 @@ def main() -> None:
     start_comfy_if_needed()
     threading.Thread(target=listen_for_progress, daemon=True).start()
     atexit.register(stop_comfy_if_we_started)
-    server = ThreadingHTTPServer((STUDIO_HOST, STUDIO_PORT), StudioHandler)
-    url = studio_url()
-    print(f"{APP_NAME}: {url}", flush=True)
+    servers = bind_studio_servers()
+    print(f"{APP_NAME}: {studio_url()}", flush=True)
+    if TAILSCALE_IPV4:
+        print(f"スマホから: http://{TAILSCALE_IPV4}:{STUDIO_PORT}", flush=True)
+    if TAILSCALE_DNS:
+        print(f"スマホから（名前）: http://{TAILSCALE_DNS}:{STUDIO_PORT}", flush=True)
     print("終了するときは、この画面で Ctrl+C を押してください。", flush=True)
-    worker = threading.Thread(target=server.serve_forever, daemon=True)
-    worker.start()
+    workers = []
+    for server in servers:
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        workers.append(worker)
     open_studio_page()
     try:
-        while worker.is_alive():
-            worker.join(0.5)
+        while any(worker.is_alive() for worker in workers):
+            for worker in workers:
+                worker.join(0.5)
     except KeyboardInterrupt:
         print("\n終了します。", flush=True)
     finally:
-        server.shutdown()
-        server.server_close()
+        for server in servers:
+            server.shutdown()
+            server.server_close()
         stop_comfy_if_we_started()
 
 

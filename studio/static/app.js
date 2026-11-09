@@ -510,6 +510,11 @@ detail.addEventListener("keydown", (event) => {
 });
 document.querySelector("#detail-close").addEventListener("click", () => detail.close());
 document.querySelector("#detail-folder").addEventListener("click", openOutputFolder);
+const onThisPc = location.hostname === "127.0.0.1" || location.hostname === "localhost";
+if (!onThisPc) {
+  openFolder.hidden = true;
+  document.querySelector("#detail-folder").hidden = true;
+}
 openFolder.addEventListener("click", openOutputFolder);
 document.querySelector("#detail-rerun").addEventListener("click", () => {
   const settings = JSON.parse(detail.dataset.settings || "{}");
