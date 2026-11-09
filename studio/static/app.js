@@ -476,7 +476,9 @@ function syncScrollLock() {
 }
 
 function setSheet(open) {
-  document.body.classList.toggle("sheet-open", Boolean(open) && isPhone());
+  const next = Boolean(open) && isPhone();
+  document.body.classList.toggle("sheet-open", next);
+  if (!next) promptBox.blur();
   syncScrollLock();
 }
 
@@ -491,7 +493,11 @@ document.querySelector("#sheet-close").addEventListener("click", () => {
 });
 document.querySelector("#sheet-scrim").addEventListener("click", () => {
   setSheet(false);
-  promptBox.blur();
+});
+document.querySelector("#composer").addEventListener("click", (event) => {
+  if (!document.body.classList.contains("sheet-open")) return;
+  const empty = event.target.id === "composer" || event.target.id === "sheet-scroll" || event.target.classList.contains("side");
+  if (empty) setSheet(false);
 });
 phoneQuery.addEventListener("change", () => setSheet(false));
 document.addEventListener("touchmove", (event) => {

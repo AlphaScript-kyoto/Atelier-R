@@ -35,7 +35,7 @@ body.scroll-lock {
   overscroll-behavior: none;
 }
 
-#composer { display: contents; }
+#composer, #sheet-scroll { display: contents; }
 
 .sheet-head, #sheet-scrim, #detail-back, .detail-toolbar, #detail-info-scrim { display: none; }
 
@@ -582,24 +582,36 @@ figcaption {
   body.sheet-open { overflow: hidden; }
   body.sheet-open #sheet-scrim { display: block; }
   body.sheet-open #composer {
-    top: 8dvh;
+    top: auto;
     bottom: 0;
+    height: 78vh;
+    max-height: 78vh;
     flex-direction: column;
     align-items: stretch;
-    overflow: auto;
+    overflow: hidden;
     border-radius: 18px 18px 0 0;
-    padding: 8px 16px calc(20px + env(safe-area-inset-bottom));
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
   }
-  body.sheet-open .prompt-block { order: 1; }
+  body.sheet-open .prompt-block { flex: none; }
+  body.sheet-open #sheet-scroll {
+    display: block;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding-bottom: 12px;
+  }
   body.sheet-open .side {
     display: block;
-    order: 2;
     height: auto;
+    max-height: none;
     overflow: visible;
     border: 0;
-    padding: 8px 0 0;
+    padding: 4px 0 0;
     background: transparent;
   }
+  body.sheet-open .brand { display: none; }
   body.sheet-open .sheet-head { display: flex; justify-content: flex-end; }
   body.sheet-open #sheet-close {
     border: 0;
@@ -610,17 +622,15 @@ figcaption {
   }
   body.sheet-open .prompt-block label,
   body.sheet-open #negative-block { display: block; }
-  body.sheet-open #negative-block { order: 3; margin: 12px 0; }
+  body.sheet-open #negative-block { margin: 12px 0; }
   body.sheet-open #prompt { height: auto; min-height: 96px; }
   body.sheet-open #generate {
-    order: 4;
+    flex: none;
     width: 100%;
     height: auto;
     margin-top: 8px;
     padding: 14px 22px;
     border-radius: 999px;
-    position: sticky;
-    bottom: 0;
     font-size: 16px;
   }
   body.sheet-open #generate::before { content: none; }

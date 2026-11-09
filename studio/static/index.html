@@ -9,6 +9,14 @@
 <body>
   <button id="sheet-scrim" type="button" aria-label="入力を閉じる"></button>
   <form id="composer">
+    <div class="prompt-block">
+      <div class="sheet-head">
+        <button id="sheet-close" type="button">閉じる</button>
+      </div>
+      <label for="prompt">描きたい内容</label>
+      <textarea id="prompt" rows="5" placeholder="例: 1girl, solo, upper body, looking at viewer, soft smile, red dress, simple background"></textarea>
+    </div>
+  <div id="sheet-scroll">
   <aside class="side">
     <header class="brand">
       <p class="eyebrow">SDXL</p>
@@ -77,17 +85,11 @@
       <input id="count" class="count-input" type="number" min="1" max="99" step="1" value="1" inputmode="numeric">
     </section>
   </aside>
-    <div class="prompt-block">
-      <div class="sheet-head">
-        <button id="sheet-close" type="button">閉じる</button>
-      </div>
-      <label for="prompt">描きたい内容</label>
-      <textarea id="prompt" rows="5" placeholder="例: 1girl, solo, upper body, looking at viewer, soft smile, red dress, simple background"></textarea>
-    </div>
     <details id="negative-block">
       <summary>避けたい内容（任意）</summary>
       <textarea id="negative" rows="3">worst quality, low quality, bad anatomy, bad hands, missing fingers, extra digits, text, watermark, blurry</textarea>
     </details>
+  </div>
     <button id="generate" type="submit">生成する</button>
     <div id="progress-wrap" class="progress-wrap" hidden>
       <div class="progress-track"><div id="progress-bar"></div></div>
