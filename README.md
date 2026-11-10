@@ -58,6 +58,39 @@ http://100.86.109.80:8189
 
 「フォルダを開く」は、この PC のエクスプローラーを開くボタンです。スマホの画面では出しません。生成した絵は、これまで通りこの PC の `ComfyUI/output/` に保存されます。
 
+### Muse から生成する
+
+Muse は画面のボタンを押しません。Atelier R に、合言葉付きの生成口があります。モデル、LoRA、枚数の上限は、画面の **生成する** と同じです。画像エンジン（8188）は PC の中だけのままです。
+
+初めて起動すると、プロジェクトのフォルダに `agent_token.txt` が作られます。中の1行が合言葉です。このファイルは GitHub には入りません。チャットや画面写真に写さないでください。
+
+Muse が使うアドレスは、スマホと同じ `http://100.` で始まる 8189 です。送るときは、次の見出しを付けます。
+
+```text
+Authorization: Bearer 合言葉
+```
+
+入口は4つです。
+
+| 操作 | アドレス |
+| --- | --- |
+| モデル一覧 | `GET /api/agent/options` |
+| 生成を始める | `POST /api/agent/generate` |
+| 進み具合 | `GET /api/agent/jobs/返ってきたprompt_id` |
+| できた絵 | `GET /api/agent/image?filename=ファイル名` |
+
+生成に送る JSON は、画面が内部で送っているものと同じです。`checkpoint`、`prompt`、`width`、`height`、`count` が基本で、LoRA を使うときは `lora` と `strength` を足します。
+
+この PC の中から試すときは、Atelier R を開いたあと、プロジェクトのフォルダで次を実行します。合言葉はファイルから読むので、コマンドに直接書きません。
+
+```powershell
+$token = (Get-Content .\agent_token.txt -Raw).Trim()
+$headers = @{ Authorization = "Bearer $token" }
+Invoke-RestMethod http://127.0.0.1:8189/api/agent/options -Headers $headers
+```
+
+合言葉が無い、または違うときは「合言葉が違います。」と返ります。「フォルダを開く」は、合言葉があってもスマホや Muse からは動きません。
+
 ### 2. 左で選ぶ
 
 1. **基礎モデル** で次のどれかを選びます。最初は Holy Mix です。
@@ -149,6 +182,7 @@ http://100.86.109.80:8189
 | `start_nodes.bat` | ノードを線でつなぐ画面です。普段は使いません。 |
 | `studio/app.py` | 画面のサーバーです。ブラウザと ComfyUI の間を取り持ちます。 |
 | `studio/extra_words.txt` | 追加ワードの一覧です。1行に1つ、自分で書き足します。 |
+| `agent_token.txt` | Muse 用の合言葉です。起動すると作られます。GitHub には入りません。 |
 | `studio/static/` | 画面の HTML、見た目、動きです。 |
 | `ComfyUI/` | ComfyUI 本体と、Python 3.13 の仮想環境（`.venv`）です。 |
 | `ComfyUI/extra_model_paths.yaml` | モデルの置き場所を ComfyUI に教える設定です。 |

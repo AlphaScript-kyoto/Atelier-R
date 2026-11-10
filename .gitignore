@@ -9,3 +9,9 @@ models/
 # Python の一時ファイル
 __pycache__/
 *.pyc
+
+# Muse 用の合言葉。この PC にだけ置く
+agent_token.txt
+
+# Tailscale の許可ルールの控え。この PC にだけ置く
+tailscale-policy-backup.json

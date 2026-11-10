@@ -5,10 +5,12 @@ from __future__ import annotations
 import atexit
 import base64
 import ctypes
+import hmac
 import json
 import mimetypes
 import os
 import random
+import secrets
 import socket
 import struct
 import subprocess
@@ -27,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMFY_DIR = ROOT / "ComfyUI"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EXTRA_WORDS_PATH = Path(__file__).resolve().parent / "extra_words.txt"
+AGENT_TOKEN_PATH = ROOT / "agent_token.txt"
 COMFY_URL = "http://127.0.0.1:8188"
 STUDIO_HOST = "127.0.0.1"
 STUDIO_PORT = 8189
@@ -134,6 +137,25 @@ def refresh_tailscale_names() -> None:
                 TAILSCALE_DNS = name
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
         return
+
+
+def read_agent_token() -> str:
+    try:
+        token = AGENT_TOKEN_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if len(token) < 32 or any(character.isspace() for character in token):
+        return ""
+    return token
+
+
+def ensure_agent_token() -> None:
+    if read_agent_token():
+        print(f"Muse用の合言葉: {AGENT_TOKEN_PATH.name}", flush=True)
+        return
+    AGENT_TOKEN_PATH.write_text(secrets.token_urlsafe(32) + "\n", encoding="utf-8")
+    print(f"Muse用の合言葉を作りました: {AGENT_TOKEN_PATH.name}", flush=True)
+    print("このファイルは GitHub には上げません。中身を人に見せないでください。", flush=True)
 
 
 def studio_hosts() -> set[str]:
@@ -504,8 +526,58 @@ class StudioHandler(BaseHTTPRequestHandler):
             return
         super().log_error(fmt, *args)
 
+    def bearer_token(self) -> str:
+        header = self.headers.get("Authorization") or ""
+        scheme, _, value = header.partition(" ")
+        if scheme.lower() != "bearer":
+            return ""
+        return value.strip()
+
+    def agent_authorized(self) -> bool:
+        presented = self.bearer_token()
+        expected = read_agent_token()
+        if not presented or not expected:
+            return False
+        return hmac.compare_digest(presented, expected)
+
+    def reject_agent(self) -> None:
+        self.send_json({"error": "合言葉が違います。"}, status=401)
+
+    def for_agent(self, payload: dict) -> dict:
+        images = payload.get("images")
+        if not images:
+            return payload
+        copied = dict(payload)
+        copied["images"] = []
+        for image in images:
+            item = dict(image)
+            query = urllib.parse.urlparse(str(item.get("url") or "")).query
+            if query:
+                item["url"] = "/api/agent/image?" + query
+            copied["images"].append(item)
+        return copied
+
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/agent/options":
+            if not self.agent_authorized():
+                self.reject_agent()
+                return
+            self.send_json(list_options())
+            return
+        if parsed.path.startswith("/api/agent/jobs/"):
+            if not self.agent_authorized():
+                self.reject_agent()
+                return
+            prompt_id = parsed.path.removeprefix("/api/agent/jobs/")
+            self.send_json(self.for_agent(job_status(prompt_id)))
+            return
+        if parsed.path == "/api/agent/image":
+            if not self.agent_authorized():
+                self.reject_agent()
+                return
+            self.send_image(urllib.parse.parse_qs(parsed.query))
+            return
         if parsed.path == "/api/options":
             self.send_json(list_options())
             return
@@ -542,6 +614,15 @@ class StudioHandler(BaseHTTPRequestHandler):
         if not allowed:
             self.send_json({"error": denied}, status=403)
             return None
+        return self.read_body_object()
+
+    def read_agent_json(self) -> dict | None:
+        if not self.agent_authorized():
+            self.reject_agent()
+            return None
+        return self.read_body_object()
+
+    def read_body_object(self) -> dict | None:
         content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if content_type != "application/json":
             self.send_json({"error": "送信形式が正しくありません。"}, status=415)
@@ -573,12 +654,20 @@ class StudioHandler(BaseHTTPRequestHandler):
             os.startfile(OUTPUT_DIR)
             self.send_json({"ok": True, "path": str(OUTPUT_DIR)})
             return
+        if path == "/api/agent/generate":
+            body = self.read_agent_json()
+            if body is not None:
+                self.begin_generation(body, for_muse=True)
+            return
         if path != "/api/generate":
             self.send_error(404)
             return
         body = self.read_json_object()
         if body is None:
             return
+        self.begin_generation(body, for_muse=False)
+
+    def begin_generation(self, body: dict, *, for_muse: bool) -> None:
         try:
             graph, seed = build_graph(body)
             result = comfy_json("POST", "/prompt", {"prompt": graph, "client_id": CLIENT_ID})
@@ -594,7 +683,10 @@ class StudioHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "ワークフローを開始できませんでした。"}, status=502)
             return
         remember_job(prompt_id, seed)
-        self.send_json({"prompt_id": prompt_id, "seed": seed})
+        payload = {"prompt_id": prompt_id, "seed": seed}
+        if for_muse:
+            payload["status_url"] = f"/api/agent/jobs/{prompt_id}"
+        self.send_json(payload)
 
     def send_json(self, payload: dict, status: int = 200) -> None:
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -806,6 +898,7 @@ def bind_studio_servers() -> list[ThreadingHTTPServer]:
 
 
 def main() -> None:
+    ensure_agent_token()
     refresh_tailscale_names()
     if port_is_open(STUDIO_PORT):
         open_studio_page()
