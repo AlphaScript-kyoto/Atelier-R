@@ -158,6 +158,49 @@ def ensure_agent_token() -> None:
     print("このファイルは GitHub には上げません。中身を人に見せないでください。", flush=True)
 
 
+_agent_peer_ips: set[str] = set()
+_agent_peer_checked = 0.0
+_agent_peer_lock = threading.Lock()
+
+
+def agent_peer_ips() -> set[str]:
+    """tag:agent が付いた端末の Tailscale アドレスです。番号は起動のたびに読み直します。"""
+    global _agent_peer_ips, _agent_peer_checked
+    now = time.time()
+    with _agent_peer_lock:
+        if _agent_peer_checked and now - _agent_peer_checked < 30:
+            return set(_agent_peer_ips)
+    found: set[str] = set()
+    try:
+        status = subprocess.run(
+            ["tailscale", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if status.returncode != 0 or not status.stdout:
+            raise OSError("tailscale status failed")
+        payload = json.loads(status.stdout)
+        peers = payload.get("Peer") or {}
+        values = peers.values() if isinstance(peers, dict) else peers
+        for peer in values:
+            tags = [str(tag) for tag in (peer.get("Tags") or [])]
+            if "tag:agent" not in tags:
+                continue
+            for address in peer.get("TailscaleIPs") or []:
+                text = str(address).strip()
+                if text:
+                    found.add(text)
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        with _agent_peer_lock:
+            return set(_agent_peer_ips)
+    with _agent_peer_lock:
+        _agent_peer_ips = found
+        _agent_peer_checked = time.time()
+        return set(found)
+
+
 def studio_hosts() -> set[str]:
     hosts = {f"{STUDIO_HOST}:{STUDIO_PORT}"}
     if TAILSCALE_IPV4:
@@ -533,12 +576,19 @@ class StudioHandler(BaseHTTPRequestHandler):
             return ""
         return value.strip()
 
+    def client_ip(self) -> str:
+        host = str(self.client_address[0] if self.client_address else "")
+        if host.startswith("::ffff:"):
+            return host.removeprefix("::ffff:")
+        return host
+
     def agent_authorized(self) -> bool:
         presented = self.bearer_token()
         expected = read_agent_token()
-        if not presented or not expected:
-            return False
-        return hmac.compare_digest(presented, expected)
+        if presented and expected and hmac.compare_digest(presented, expected):
+            return True
+        # 合言葉をチャットに出さず、tag:agent の端末だけを通す。
+        return self.client_ip() in agent_peer_ips()
 
     def reject_agent(self) -> None:
         self.send_json({"error": "合言葉が違います。"}, status=401)
@@ -900,6 +950,11 @@ def bind_studio_servers() -> list[ThreadingHTTPServer]:
 def main() -> None:
     ensure_agent_token()
     refresh_tailscale_names()
+    peers = ", ".join(sorted(agent_peer_ips()))
+    if peers:
+        print(f"合言葉なしで通す端末: {peers}", flush=True)
+    else:
+        print("tag:agent の端末は見つかりません。Muse には合言葉が必要です。", flush=True)
     if port_is_open(STUDIO_PORT):
         open_studio_page()
         notify_already_open()
