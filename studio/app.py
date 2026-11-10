@@ -956,8 +956,9 @@ def main() -> None:
     else:
         print("tag:agent の端末は見つかりません。Muse には合言葉が必要です。", flush=True)
     if port_is_open(STUDIO_PORT):
-        open_studio_page()
-        notify_already_open()
+        if os.environ.get("STUDIO_SKIP_DIALOG") != "1":
+            open_studio_page()
+            notify_already_open()
         raise SystemExit(2)
     start_comfy_if_needed()
     threading.Thread(target=listen_for_progress, daemon=True).start()

@@ -166,6 +166,18 @@ Invoke-RestMethod http://127.0.0.1:8189/api/agent/options -Headers $headers
 - 左上の ←、絵の周りの黒い部分、条件カードの周りの黒い部分をタップすると、絵の画面を閉じます。
 - 左下の **i** から、シード、使った文章、モデルを見られます。× を押すと、絵の画面に戻ります。
 
+## 毎晩22時に開く
+
+Windows のタスク「Atelier R」が、毎日 22:00 に `start_nightly.bat` を実行します。すでに Atelier R が開いているときは、新しい画面は作りません。
+
+この PC が起動していて、あなたがサインインしている必要があります。スリープ中なら、起こせる場合は起こしてから開きます。電源が切れているときは、22時を過ぎても自動では開きません。
+
+止めるときは、22時に出た黒い画面で `Ctrl + C` を押します。自動起動をやめるときは、次を実行します。
+
+```powershell
+Unregister-ScheduledTask -TaskName "Atelier R" -Confirm:$false
+```
+
 ## 追加ワードを増やす
 
 1. `studio/extra_words.txt` を、メモ帳か Cursor で開きます。
@@ -181,6 +193,7 @@ Invoke-RestMethod http://127.0.0.1:8189/api/agent/options -Headers $headers
 | ファイル / フォルダ | 役割 |
 | --- | --- |
 | `start_comfyui.bat` | Atelier R を開くバッチです。普段はこれをダブルクリックします。 |
+| `start_nightly.bat` | 毎晩22時の自動起動が呼ぶバッチです。普段はダブルクリックしません。 |
 | `start_nodes.bat` | ノードを線でつなぐ画面です。普段は使いません。 |
 | `studio/app.py` | 画面のサーバーです。ブラウザと ComfyUI の間を取り持ちます。 |
 | `studio/extra_words.txt` | 追加ワードの一覧です。1行に1つ、自分で書き足します。 |
