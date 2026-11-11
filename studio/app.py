@@ -55,7 +55,14 @@ LORA_CATALOG = {
             "ornate black gauntlets on both arms",
             "black chest plate",
         ],
-    }
+    },
+    "super-creek.safetensors": {
+        "name": "Super Creek",
+        "triggers": [
+            "d4pv95de878c73flsqv0",
+            "super creek \\(umamusume\\)",
+        ],
+    },
 }
 RATIOS = [
     {"id": "1:2", "label": "1:2", "width": 768, "height": 1536, "column": "portrait"},

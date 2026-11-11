@@ -105,6 +105,10 @@ Invoke-RestMethod http://127.0.0.1:8189/api/agent/options -Headers $headers
    - ornate black gauntlets on both arms
    - black chest plate
 
+   Super Creek（`super-creek.safetensors`）を足すと、次の言葉が出ます。上の文字列は、このファイルが学習で覚えた呼び方です。下はキャラクター名です。括弧の前の `\` は、括弧が「強調」と読まれないようにするための印なので、そのまま使います。
+   - `d4pv95de878c73flsqv0`
+   - `super creek \(umamusume\)`
+
    新しい LoRA は、`models/loras` に `.safetensors` を置いてから Atelier R を終了し、開き直すと一覧に出ます。表示名や言葉を別に用意していないファイルは、ファイル名のまま出ます。
 3. **縦横比** のボタンを押すと、幅と高さがその比率の大きさに変わります。最初は `9:16` です。
 
