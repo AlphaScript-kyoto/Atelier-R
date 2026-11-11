@@ -99,7 +99,7 @@ Invoke-RestMethod http://127.0.0.1:8189/api/agent/options -Headers $headers
    - Holy Mix（`3_HolyMix_00002_.safetensors`）
    - EstellaXL（`2_EstellaXL.safetensors`）
    - AnimeMix v8（`1_animemixillustrious_v8.safetensors`）
-2. **LoRA** の **追加する** で一覧から足します。足したカードは残るので、もう一度 **追加する** で別の LoRA を重ねられます。同時に 5 つまでです。それぞれの強さは 0 から 2 です。言葉をクリックすると、中央の入力欄の後ろに足されます。スマホでは、この言葉を押してもキーボードは出ません。キーボードは入力欄をタップしたときだけ出ます。**すべて使用** はその LoRA の言葉をまとめて足します。選んだだけでは、文章の先頭には自動で入りません。最初は Olivia von Ecclesia が 1 つ入っています。
+2. **LoRA** の **追加する** で一覧から足します。足したカードは残るので、もう一度 **追加する** で別の LoRA を重ねられます。同時に 5 つまでです。それぞれの強さは 0 から 2 です。言葉をクリックすると、中央の入力欄の後ろに足されます。スマホでは、この言葉を押してもキーボードは出ません。キーボードは入力欄をタップしたときだけ出ます。**すべて使用** は、そのカードの Trigger Words の言葉をまとめて足します。衣装が分かれているときは、衣装名の横の **この衣装** で、その衣装だけを足します。選んだだけでは、文章の先頭には自動で入りません。最初は Olivia von Ecclesia が 1 つ入っています。
    - liv (long blonde wavy hair, emerald eyes)
    - red and black royal dress with gold trim
    - ornate black gauntlets on both arms
@@ -108,6 +108,8 @@ Invoke-RestMethod http://127.0.0.1:8189/api/agent/options -Headers $headers
    Super Creek（`super-creek.safetensors`）を足すと、次の言葉が出ます。上の文字列は、このファイルが学習で覚えた呼び方です。下はキャラクター名です。括弧の前の `\` は、括弧が「強調」と読まれないようにするための印なので、そのまま使います。
    - `d4pv95de878c73flsqv0`
    - `super creek \(umamusume\)`
+
+   Elegg（`Elegg_-_Goddess_of_Victory_Nikke_Various_Outfits.safetensors`）を足すと、衣装ごとの言葉が出ます。呼び方は `EleggNK` です。**見た目** は髪と目で、どの衣装でも共通です。衣装の名前の横にある **この衣装** を押すと、呼び方と見た目とその衣装の言葉がまとめて入ります。別の衣装の言葉は入りません。サイトに `whte socks` と `oficial alternate costume` と書いてある綴りは、そのままで残しています。
 
    新しい LoRA は、`models/loras` に `.safetensors` を置いてから Atelier R を終了し、開き直すと一覧に出ます。表示名や言葉を別に用意していないファイルは、ファイル名のまま出ます。
 3. **縦横比** のボタンを押すと、幅と高さがその比率の大きさに変わります。最初は `9:16` です。

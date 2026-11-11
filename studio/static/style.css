@@ -161,7 +161,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   font-weight: 700;
 }
 
-#use-all-triggers {
+.trigger-all {
   border: 0;
   background: transparent;
   color: #c4b8ff;

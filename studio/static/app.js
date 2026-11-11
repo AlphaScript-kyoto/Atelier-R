@@ -113,6 +113,34 @@ function renderLoraChoices() {
   loraSelect.disabled = selectedLoras.length >= MAX_LORAS || loraSelect.options.length === 1;
 }
 
+function triggerSection(title, actionLabel, insertWords, chipWords) {
+  const section = document.createElement("div");
+  const head = document.createElement("div");
+  head.className = "trigger-head";
+  const label = document.createElement("span");
+  label.textContent = title;
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "trigger-all";
+  action.textContent = actionLabel;
+  action.addEventListener("click", () => insertWords.forEach((text) => addTrigger(text)));
+  head.append(label, action);
+  const list = document.createElement("div");
+  list.className = "trigger-list";
+  chipWords.forEach((text) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "trigger";
+    button.dataset.trigger = text;
+    button.title = text;
+    button.textContent = `${shortLabel(text)} ↑`;
+    button.addEventListener("click", () => addTrigger(text));
+    list.appendChild(button);
+  });
+  section.append(head, list);
+  return section;
+}
+
 function renderLoraStack() {
   loraStack.replaceChildren();
   selectedLoras.forEach((item, index) => {
@@ -172,30 +200,23 @@ function renderLoraStack() {
     card.appendChild(row);
 
     const triggers = info && info.triggers ? info.triggers : [];
+    const shared = info && info.shared ? info.shared : [];
+    const outfits = info && info.outfits ? info.outfits : [];
     if (triggers.length) {
-      const head = document.createElement("div");
-      head.className = "trigger-head";
-      const label = document.createElement("span");
-      label.textContent = "Trigger Words";
-      const useAll = document.createElement("button");
-      useAll.type = "button";
-      useAll.textContent = "すべて使用";
-      useAll.addEventListener("click", () => triggers.forEach((text) => addTrigger(text)));
-      head.append(label, useAll);
-      const list = document.createElement("div");
-      list.className = "trigger-list";
-      triggers.forEach((text) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "trigger";
-        button.dataset.trigger = text;
-        button.title = text;
-        button.textContent = `${shortLabel(text)} ↑`;
-        button.addEventListener("click", () => addTrigger(text));
-        list.appendChild(button);
-      });
-      card.append(head, list);
+      card.append(triggerSection("Trigger Words", "すべて使用", triggers, triggers));
     }
+    if (shared.length) {
+      card.append(triggerSection("見た目", "まとめて入れる", [...triggers, ...shared], shared));
+    }
+    outfits.forEach((outfit) => {
+      const words = outfit.triggers || [];
+      card.append(triggerSection(
+        outfit.name,
+        "この衣装",
+        [...triggers, ...shared, ...words],
+        words,
+      ));
+    });
     loraStack.appendChild(card);
   });
   renderLoraChoices();
