@@ -333,6 +333,40 @@ def list_options() -> dict:
     }
 
 
+MAX_LORAS = 5
+
+
+def selected_loras(body: dict, lora_ids: set[str]) -> list[tuple[str, float]]:
+    raw = body.get("loras")
+    if isinstance(raw, list) and raw:
+        items = raw
+    elif body.get("lora"):
+        items = [{"id": body.get("lora"), "strength": body.get("strength", 1)}]
+    else:
+        items = []
+    if len(items) > MAX_LORAS:
+        raise ValueError("同時に使える LoRA は 5 つまでです。")
+    chosen: list[tuple[str, float]] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("LoRA の選択を確認してください。")
+        lora_id = str(item.get("id") or item.get("lora") or "")
+        if not lora_id:
+            continue
+        if lora_id not in lora_ids or lora_id in seen:
+            raise ValueError("LoRA の選択を確認してください。")
+        try:
+            strength = float(item.get("strength") if item.get("strength") is not None else 1)
+        except (TypeError, ValueError) as error:
+            raise ValueError("LoRA の強さを確認してください。") from error
+        if strength < 0 or strength > 2:
+            raise ValueError("LoRA の強さは 0 から 2 の間にしてください。")
+        seen.add(lora_id)
+        chosen.append((lora_id, strength))
+    return chosen
+
+
 def build_graph(body: dict) -> tuple[dict, int]:
     options = list_options()
     if not options["ready"]:
@@ -344,24 +378,19 @@ def build_graph(body: dict) -> tuple[dict, int]:
     if checkpoint not in checkpoint_ids:
         raise ValueError("基礎モデルを選んでください。")
 
-    lora = str(body.get("lora") or "")
-    if lora and lora not in lora_ids:
-        raise ValueError("LoRA の選択を確認してください。")
+    loras = selected_loras(body, lora_ids)
 
     width, height = image_size(body)
     draw_width, draw_height = sampling_size(width, height)
 
     try:
         count = int(body.get("count") or 1)
-        strength = float(body.get("strength") if body.get("strength") is not None else 1)
     except (TypeError, ValueError) as error:
-        raise ValueError("枚数と LoRA の強さを確認してください。") from error
+        raise ValueError("枚数を確認してください。") from error
     if count < 1 or count > 99:
         raise ValueError("一度に作れる枚数は 1 枚から 99 枚です。")
     if width * height * count * BYTES_PER_PIXEL > MAX_OUTPUT_BYTES:
         raise ValueError("このサイズと枚数の組み合わせはメモリが足りなくなります。枚数を減らすか、解像度を下げてください。")
-    if strength < 0 or strength > 2:
-        raise ValueError("LoRA の強さは 0 から 2 の間にしてください。")
 
     prompt = str(body.get("prompt") or "").strip()
     if not prompt:
@@ -385,19 +414,20 @@ def build_graph(body: dict) -> tuple[dict, int]:
     }
     model_ref = ["1", 0]
     clip_ref = ["1", 1]
-    if lora:
-        graph["2"] = {
+    for index, (lora_id, strength) in enumerate(loras):
+        node_id = str(20 + index)
+        graph[node_id] = {
             "class_type": "LoraLoader",
             "inputs": {
                 "model": model_ref,
                 "clip": clip_ref,
-                "lora_name": lora,
+                "lora_name": lora_id,
                 "strength_model": strength,
                 "strength_clip": strength,
             },
         }
-        model_ref = ["2", 0]
-        clip_ref = ["2", 1]
+        model_ref = [node_id, 0]
+        clip_ref = [node_id, 1]
     graph["3"] = {
         "class_type": "CLIPSetLastLayer",
         "inputs": {"clip": clip_ref, "stop_at_clip_layer": -2},

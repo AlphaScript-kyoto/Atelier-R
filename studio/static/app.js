@@ -1,13 +1,6 @@
 const checkpointSelect = document.querySelector("#checkpoint");
 const loraSelect = document.querySelector("#lora");
-const loraPanel = document.querySelector("#lora-panel");
-const loraPreview = document.querySelector("#lora-preview");
-const loraName = document.querySelector("#lora-name");
-const loraRemove = document.querySelector("#lora-remove");
-const strength = document.querySelector("#strength");
-const strengthNumber = document.querySelector("#strength-number");
-const triggerList = document.querySelector("#trigger-list");
-const useAllTriggers = document.querySelector("#use-all-triggers");
+const loraStack = document.querySelector("#lora-stack");
 const ratioBox = document.querySelector("#ratios");
 const resolutionSelect = document.querySelector("#resolution");
 const customWidth = document.querySelector("#custom-width");
@@ -42,34 +35,22 @@ let applyingNamedSize = false;
 let selectedCount = 1;
 let ratioItems = [];
 let loraInfo = [];
+let selectedLoras = [];
+const MAX_LORAS = 5;
 let reuseSeed = null;
 let outputFolder = "";
 
-strength.addEventListener("input", () => {
-  strengthNumber.value = Number(strength.value).toFixed(1);
-});
-strengthNumber.addEventListener("input", () => {
-  const value = Math.min(2, Math.max(0, Number(strengthNumber.value) || 0));
-  strength.value = value;
-  strengthNumber.value = value.toFixed(1);
-});
-loraSelect.addEventListener("change", showLora);
-loraRemove.addEventListener("click", () => {
+loraSelect.addEventListener("change", () => {
+  const id = loraSelect.value;
   loraSelect.value = "";
-  showLora();
-});
-useAllTriggers.addEventListener("click", () => {
-  currentTriggers().forEach((text) => addTrigger(text));
+  if (!id || selectedLoras.some((item) => item.id === id) || selectedLoras.length >= MAX_LORAS) return;
+  selectedLoras.push({ id, strength: 1 });
+  renderLoraStack();
 });
 promptBox.addEventListener("input", paintTriggers);
 
-function currentLora() {
-  return loraInfo.find((item) => item.id === loraSelect.value);
-}
-
-function currentTriggers() {
-  const info = currentLora();
-  return info && info.triggers ? info.triggers : [];
+function loraById(id) {
+  return loraInfo.find((item) => item.id === id);
 }
 
 function shortLabel(text) {
@@ -93,7 +74,7 @@ function addTrigger(text) {
 }
 
 function paintTriggers() {
-  document.querySelectorAll("#trigger-list .trigger, #extra-word-list .trigger").forEach((button) => {
+  document.querySelectorAll(".lora-card .trigger, #extra-word-list .trigger").forEach((button) => {
     button.setAttribute("aria-pressed", String(promptBox.value.includes(button.dataset.trigger)));
   });
 }
@@ -117,26 +98,107 @@ function renderExtraWords(words) {
   paintTriggers();
 }
 
-function showLora() {
-  const info = currentLora();
-  const active = Boolean(info);
-  loraPanel.hidden = !active;
-  loraSelect.hidden = active;
-  triggerList.replaceChildren();
-  if (!info) return;
-  loraName.textContent = info.name;
-  loraPreview.src = info.preview || "";
-  loraPreview.alt = info.name;
-  info.triggers.forEach((text) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "trigger";
-    button.dataset.trigger = text;
-    button.title = text;
-    button.textContent = `${shortLabel(text)} ↑`;
-    button.addEventListener("click", () => addTrigger(text));
-    triggerList.appendChild(button);
+function renderLoraChoices() {
+  const used = new Set(selectedLoras.map((item) => item.id));
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = selectedLoras.length >= MAX_LORAS ? "5つまでです" : "追加する";
+  loraSelect.replaceChildren(placeholder);
+  loraInfo.filter((item) => !used.has(item.id)).forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = item.name;
+    loraSelect.appendChild(option);
   });
+  loraSelect.disabled = selectedLoras.length >= MAX_LORAS || loraSelect.options.length === 1;
+}
+
+function renderLoraStack() {
+  loraStack.replaceChildren();
+  selectedLoras.forEach((item, index) => {
+    const info = loraById(item.id);
+    const name = info ? info.name : item.id;
+    const card = document.createElement("div");
+    card.className = "lora-card";
+    const top = document.createElement("div");
+    top.className = info && info.preview ? "lora-top" : "lora-top no-preview";
+    if (info && info.preview) {
+      const image = document.createElement("img");
+      image.src = info.preview;
+      image.alt = name;
+      top.appendChild(image);
+    }
+    const title = document.createElement("div");
+    const strong = document.createElement("strong");
+    strong.textContent = name;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "lora-remove";
+    remove.setAttribute("aria-label", `${name} を外す`);
+    remove.textContent = "×";
+    remove.addEventListener("click", () => {
+      selectedLoras.splice(index, 1);
+      renderLoraStack();
+    });
+    title.append(strong, remove);
+    top.appendChild(title);
+    card.appendChild(top);
+
+    const row = document.createElement("div");
+    row.className = "strength-row";
+    const range = document.createElement("input");
+    range.type = "range";
+    range.min = "0";
+    range.max = "2";
+    range.step = "0.1";
+    range.value = String(item.strength);
+    range.setAttribute("aria-label", `${name} の強さ`);
+    const number = document.createElement("input");
+    number.type = "number";
+    number.min = "0";
+    number.max = "2";
+    number.step = "0.1";
+    number.value = Number(item.strength).toFixed(1);
+    number.setAttribute("aria-label", `${name} の強さの数値`);
+    const setStrength = (value) => {
+      const next = Math.min(2, Math.max(0, Number(value) || 0));
+      item.strength = next;
+      range.value = String(next);
+      number.value = next.toFixed(1);
+    };
+    range.addEventListener("input", () => setStrength(range.value));
+    number.addEventListener("input", () => setStrength(number.value));
+    row.append(range, number);
+    card.appendChild(row);
+
+    const triggers = info && info.triggers ? info.triggers : [];
+    if (triggers.length) {
+      const head = document.createElement("div");
+      head.className = "trigger-head";
+      const label = document.createElement("span");
+      label.textContent = "Trigger Words";
+      const useAll = document.createElement("button");
+      useAll.type = "button";
+      useAll.textContent = "すべて使用";
+      useAll.addEventListener("click", () => triggers.forEach((text) => addTrigger(text)));
+      head.append(label, useAll);
+      const list = document.createElement("div");
+      list.className = "trigger-list";
+      triggers.forEach((text) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "trigger";
+        button.dataset.trigger = text;
+        button.title = text;
+        button.textContent = `${shortLabel(text)} ↑`;
+        button.addEventListener("click", () => addTrigger(text));
+        list.appendChild(button);
+      });
+      card.append(head, list);
+    }
+    loraStack.appendChild(card);
+  });
+  renderLoraChoices();
   paintTriggers();
 }
 
@@ -285,34 +347,35 @@ async function loadOptions() {
     checkpointSelect.appendChild(option);
   });
   loraInfo = data.loras;
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = "追加する";
-  loraSelect.replaceChildren(placeholder);
-  data.loras.forEach((item) => {
-    const option = document.createElement("option");
-    option.value = item.id;
-    option.textContent = item.name;
-    loraSelect.appendChild(option);
-  });
-  const olivia = data.loras.find((item) => item.id === "olivia.safetensors");
-  if (olivia) loraSelect.value = olivia.id;
+  selectedLoras = selectedLoras.filter((item) => data.loras.some((lora) => lora.id === item.id));
+  if (!selectedLoras.length && data.loras.some((item) => item.id === "olivia.safetensors")) {
+    selectedLoras = [{ id: "olivia.safetensors", strength: 1 }];
+  }
+  renderLoraStack();
   renderRatios(data.ratios);
-  showLora();
   statusLine.textContent = "準備できました。トリガーワードをクリックして、生成するを押してください。";
 }
 
 function currentSettings(seed) {
   clampCount();
   const checkpoint = checkpointSelect.selectedOptions[0];
-  const lora = currentLora();
+  const loras = selectedLoras.map((item) => {
+    const info = loraById(item.id);
+    return {
+      id: item.id,
+      name: info ? info.name : item.id,
+      strength: Number(item.strength),
+    };
+  });
+  const first = loras[0];
   const ratioButton = ratioBox.querySelector(`[data-value="${selectedRatio}"]`);
   return {
     checkpoint: checkpointSelect.value,
     checkpointName: checkpoint ? checkpoint.textContent : "",
-    lora: loraSelect.value,
-    loraName: lora ? lora.name : "なし",
-    strength: Number(strength.value),
+    loras,
+    lora: first ? first.id : "",
+    loraName: first ? first.name : "なし",
+    strength: first ? first.strength : 1,
     prompt: promptBox.value,
     negative: negativeBox.value,
     ratio: selectedRatio,
@@ -355,8 +418,7 @@ form.addEventListener("submit", async (event) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         checkpoint: settings.checkpoint,
-        lora: settings.lora,
-        strength: settings.strength,
+        loras: settings.loras.map((item) => ({ id: item.id, strength: item.strength })),
         prompt: settings.prompt,
         negative: settings.negative,
         ratio: settings.ratio,
@@ -562,7 +624,9 @@ function showDetail() {
     fact("CFG", "5.5"),
     fact("Clip Skip", "2"),
     fact("モデル", settings.checkpointName),
-    fact("LoRA", settings.lora === "" ? "なし" : `${settings.loraName}（強さ ${settings.strength.toFixed(1)}）`),
+    fact("LoRA", settings.loras && settings.loras.length
+      ? settings.loras.map((item) => `${item.name}（強さ ${Number(item.strength).toFixed(1)}）`).join("、")
+      : "なし"),
     fact("保存先", image.path),
   );
   detailPrompt.textContent = settings.negative
@@ -626,10 +690,14 @@ document.querySelector("#detail-rerun").addEventListener("click", () => {
 
 function applySettings(settings) {
   checkpointSelect.value = settings.checkpoint;
-  loraSelect.value = settings.lora || "";
-  showLora();
-  strength.value = settings.strength;
-  strengthNumber.value = Number(settings.strength).toFixed(1);
+  if (Array.isArray(settings.loras)) {
+    selectedLoras = settings.loras.map((item) => ({ id: item.id, strength: Number(item.strength) }));
+  } else if (settings.lora) {
+    selectedLoras = [{ id: settings.lora, strength: Number(settings.strength) }];
+  } else {
+    selectedLoras = [];
+  }
+  renderLoraStack();
   promptBox.value = settings.prompt || "";
   negativeBox.value = settings.negative || "";
   paintTriggers();

@@ -32,28 +32,11 @@
       <div class="section-head">
         <span class="label">LoRA</span>
       </div>
-      <select id="lora">
+      <div id="lora-stack"></div>
+      <select id="lora" aria-label="LoRA を追加">
         <option value="">追加する</option>
       </select>
-      <div id="lora-panel" class="lora-card" hidden>
-        <div class="lora-top">
-          <img id="lora-preview" alt="">
-          <div>
-            <strong id="lora-name"></strong>
-            <button id="lora-remove" type="button" aria-label="LoRA を外す">×</button>
-          </div>
-        </div>
-        <div class="strength-row">
-          <input id="strength" type="range" min="0" max="2" step="0.1" value="1">
-          <input id="strength-number" type="number" min="0" max="2" step="0.1" value="1">
-        </div>
-        <div class="trigger-head">
-          <span>Trigger Words</span>
-          <button id="use-all-triggers" type="button">すべて使用</button>
-        </div>
-        <div id="trigger-list" class="trigger-list"></div>
-        <p class="hint">言葉をクリックすると、中央の入力欄に追加されます。</p>
-      </div>
+      <p class="hint">models/loras にファイルを置いて Atelier R を開き直すと、一覧に足されます。同時に 5 つまでです。</p>
     </section>
 
     <section>

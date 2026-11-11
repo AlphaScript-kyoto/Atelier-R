@@ -81,7 +81,7 @@ Authorization: Bearer 合言葉
 | 進み具合 | `GET /api/agent/jobs/返ってきたprompt_id` |
 | できた絵 | `GET /api/agent/image?filename=ファイル名` |
 
-生成に送る JSON は、画面が内部で送っているものと同じです。`checkpoint`、`prompt`、`width`、`height`、`count` が基本で、LoRA を使うときは `lora` と `strength` を足します。
+生成に送る JSON は、画面が内部で送っているものと同じです。`checkpoint`、`prompt`、`width`、`height`、`count` が基本です。LoRA を使うときは `loras` に `{"id","strength"}` を並べます。1 つだけなら、今までの `lora` と `strength` でも受け付けます。
 
 この PC の中から試すときは、Atelier R を開いたあと、プロジェクトのフォルダで次を実行します。合言葉はファイルから読むので、コマンドに直接書きません。
 
@@ -99,11 +99,13 @@ Invoke-RestMethod http://127.0.0.1:8189/api/agent/options -Headers $headers
    - Holy Mix（`3_HolyMix_00002_.safetensors`）
    - EstellaXL（`2_EstellaXL.safetensors`）
    - AnimeMix v8（`1_animemixillustrious_v8.safetensors`）
-2. **LoRA** で Olivia von Ecclesia を選ぶと、強さのつまみと 4 つの言葉が出ます。強さは 0 から 2 です。言葉をクリックすると、中央の入力欄の後ろに足されます。スマホでは、この言葉を押してもキーボードは出ません。キーボードは入力欄をタップしたときだけ出ます。**すべて使用** で 4 つまとめて足せます。選んだだけでは、文章の先頭には自動で入りません。
+2. **LoRA** の **追加する** で一覧から足します。足したカードは残るので、もう一度 **追加する** で別の LoRA を重ねられます。同時に 5 つまでです。それぞれの強さは 0 から 2 です。言葉をクリックすると、中央の入力欄の後ろに足されます。スマホでは、この言葉を押してもキーボードは出ません。キーボードは入力欄をタップしたときだけ出ます。**すべて使用** はその LoRA の言葉をまとめて足します。選んだだけでは、文章の先頭には自動で入りません。最初は Olivia von Ecclesia が 1 つ入っています。
    - liv (long blonde wavy hair, emerald eyes)
    - red and black royal dress with gold trim
    - ornate black gauntlets on both arms
    - black chest plate
+
+   新しい LoRA は、`models/loras` に `.safetensors` を置いてから Atelier R を終了し、開き直すと一覧に出ます。表示名や言葉を別に用意していないファイルは、ファイル名のまま出ます。
 3. **縦横比** のボタンを押すと、幅と高さがその比率の大きさに変わります。最初は `9:16` です。
 
    | 比率 | 幅×高さ | 向き |
