@@ -231,6 +231,11 @@ DIRECT_LONG_SIDE = 1536
 # 拡大後の画像を1枚あたり幅×高さ×12バイトで持つ。合計4GBを超える枚数は受け付けない。
 BYTES_PER_PIXEL = 12
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024 * 1024
+VARY_COUNT = 3
+VARY_DENOISE = 0.55
+EXPAND_PADS = (128, 256, 384)
+EXPAND_PROMPT_SUFFIX = ", extended background, matching scene, same lighting, no extra people"
+EXPAND_NEGATIVE_SUFFIX = ", extra person, duplicate, cloned character"
 
 _comfy_process: subprocess.Popen | None = None
 _jobs: dict[str, dict] = {}
@@ -521,7 +526,123 @@ def selected_loras(body: dict, lora_ids: set[str]) -> list[tuple[str, float]]:
     return chosen
 
 
-def build_graph(body: dict) -> tuple[dict, int]:
+def align_down(value: float, minimum: int = 64) -> int:
+    return max(minimum, int(value) // 8 * 8)
+
+
+def fit_output(width: int, height: int) -> tuple[int, int]:
+    if width <= MAX_SIDE and height <= MAX_SIDE and width * height <= MAX_PIXELS:
+        return width, height
+    fit = min(MAX_SIDE / width, MAX_SIDE / height, (MAX_PIXELS / (width * height)) ** 0.5)
+    return align_down(width * fit), align_down(height * fit)
+
+
+def ensure_memory(width: int, height: int, count: int) -> None:
+    if width * height * count * BYTES_PER_PIXEL > MAX_OUTPUT_BYTES:
+        raise ValueError("このサイズと枚数の組み合わせはメモリが足りなくなります。枚数を減らすか、解像度を下げてください。")
+
+
+def png_size(path: Path) -> tuple[int, int] | None:
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(24)
+    except OSError:
+        return None
+    if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
+        return None
+    width, height = struct.unpack(">II", header[16:24])
+    if width < 64 or height < 64:
+        return None
+    return width, height
+
+
+def output_image_file(source: object) -> tuple[Path, str]:
+    if not isinstance(source, dict):
+        raise ValueError("元の絵が見つかりません。一覧の絵をもう一度開いてください。")
+    filename = str(source.get("filename") or "")
+    subfolder = str(source.get("subfolder") or "").replace("\\", "/").strip("/")
+    if not filename or Path(filename).name != filename or filename.startswith("."):
+        raise ValueError("元の絵が見つかりません。一覧の絵をもう一度開いてください。")
+    if Path(filename).suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        raise ValueError("この形式の絵からは作れません。")
+    parts = [part for part in subfolder.split("/") if part] if subfolder else []
+    if any(part in {".", ".."} for part in parts):
+        raise ValueError("元の絵が見つかりません。一覧の絵をもう一度開いてください。")
+    path = OUTPUT_DIR.joinpath(*parts, filename).resolve()
+    root = OUTPUT_DIR.resolve()
+    if path != root and root not in path.parents:
+        raise ValueError("元の絵が見つかりません。一覧の絵をもう一度開いてください。")
+    if not path.is_file():
+        raise ValueError("元の絵が見つかりません。一覧の絵をもう一度開いてください。")
+    relative = "/".join([*parts, filename])
+    return path, f"{relative} [output]"
+
+
+def picture_size(path: Path, body: dict) -> tuple[int, int]:
+    found = png_size(path)
+    if found:
+        width, height = found
+    else:
+        try:
+            width = int(body.get("width"))
+            height = int(body.get("height"))
+        except (TypeError, ValueError) as error:
+            raise ValueError("元の絵のサイズを読めませんでした。") from error
+    if width < 64 or height < 64 or width > MAX_SIDE or height > MAX_SIDE or width * height > MAX_PIXELS:
+        raise ValueError("この絵のサイズでは、別パターンや拡張ができません。")
+    return width, height
+
+
+def expand_layout(width: int, height: int, pad: int) -> dict[str, int]:
+    pad = int(pad) // 8 * 8
+    room = DIRECT_LONG_SIDE - 2 * pad
+    if room < 512:
+        pad = (DIRECT_LONG_SIDE - 512) // 2 // 8 * 8
+        room = DIRECT_LONG_SIDE - 2 * pad
+    scale = min(1.0, room / max(width, height))
+    content_w = align_down(width * scale)
+    content_h = align_down(height * scale)
+    draw_w = content_w + 2 * pad
+    draw_h = content_h + 2 * pad
+    while max(draw_w, draw_h) > DIRECT_LONG_SIDE and (content_w > 64 or content_h > 64):
+        if content_w >= content_h and content_w > 64:
+            content_w -= 8
+        elif content_h > 64:
+            content_h -= 8
+        else:
+            break
+        draw_w = content_w + 2 * pad
+        draw_h = content_h + 2 * pad
+    out_w = align_down(width + (2 * pad) / (content_w / width))
+    out_h = align_down(height + (2 * pad) / (content_h / height))
+    out_w, out_h = fit_output(out_w, out_h)
+    if out_w <= width or out_h <= height:
+        raise ValueError("この絵はすでに大きいので、周りを広げる余白が足りません。もう少し小さい絵で試してください。")
+    return {
+        "content_w": content_w,
+        "content_h": content_h,
+        "pad": pad,
+        "draw_w": draw_w,
+        "draw_h": draw_h,
+        "out_w": out_w,
+        "out_h": out_h,
+        "feather": min(32, max(8, pad // 4)),
+    }
+
+
+def read_seed(body: dict, *, fresh: bool) -> int:
+    if fresh or body.get("seed") in (None, ""):
+        return random.randrange(0, 2**32)
+    try:
+        seed = int(body.get("seed"))
+    except (TypeError, ValueError) as error:
+        raise ValueError("シードは数字にしてください。") from error
+    if seed < 0 or seed > 2**32 - 1:
+        raise ValueError("シードの数が範囲の外です。")
+    return seed
+
+
+def generation_inputs(body: dict, mode: str) -> dict:
     options = list_options()
     if not options["ready"]:
         raise ValueError("画像エンジンの準備がまだです。少し待ってからもう一度押してください。")
@@ -532,20 +653,6 @@ def build_graph(body: dict) -> tuple[dict, int]:
     if checkpoint not in checkpoint_ids:
         raise ValueError("基礎モデルを選んでください。")
 
-    loras = selected_loras(body, lora_ids)
-
-    width, height = image_size(body)
-    draw_width, draw_height = sampling_size(width, height)
-
-    try:
-        count = int(body.get("count") or 1)
-    except (TypeError, ValueError) as error:
-        raise ValueError("枚数を確認してください。") from error
-    if count < 1 or count > 99:
-        raise ValueError("一度に作れる枚数は 1 枚から 99 枚です。")
-    if width * height * count * BYTES_PER_PIXEL > MAX_OUTPUT_BYTES:
-        raise ValueError("このサイズと枚数の組み合わせはメモリが足りなくなります。枚数を減らすか、解像度を下げてください。")
-
     prompt = str(body.get("prompt") or "").strip()
     if not prompt:
         raise ValueError("中央の欄に、描きたい内容を書いてください。")
@@ -553,16 +660,80 @@ def build_graph(body: dict) -> tuple[dict, int]:
         raise ValueError("文章が長すぎます。4000 文字以内にしてください。")
     negative = str(body.get("negative") or "").strip()[:4000]
 
-    seed = body.get("seed")
-    if seed is None or seed == "":
-        seed = random.randrange(0, 2**32)
-    try:
-        seed = int(seed)
-    except (TypeError, ValueError) as error:
-        raise ValueError("シードは数字にしてください。") from error
-    if seed < 0 or seed > 2**32 - 1:
-        raise ValueError("シードの数が範囲の外です。")
+    if mode == "create":
+        width, height = image_size(body)
+        try:
+            count = int(body.get("count") or 1)
+        except (TypeError, ValueError) as error:
+            raise ValueError("枚数を確認してください。") from error
+        if count < 1 or count > 99:
+            raise ValueError("一度に作れる枚数は 1 枚から 99 枚です。")
+        ensure_memory(width, height, count)
+        draw_width, draw_height = sampling_size(width, height)
+        return {
+            "checkpoint": checkpoint,
+            "loras": selected_loras(body, lora_ids),
+            "prompt": prompt,
+            "negative": negative,
+            "seed": read_seed(body, fresh=False),
+            "count": count,
+            "width": width,
+            "height": height,
+            "out_width": width,
+            "out_height": height,
+            "draw_width": draw_width,
+            "draw_height": draw_height,
+        }
 
+    image_path, annotation = output_image_file(body.get("source"))
+    width, height = picture_size(image_path, body)
+    if mode == "vary":
+        draw_width, draw_height = sampling_size(width, height)
+        ensure_memory(width, height, VARY_COUNT)
+        return {
+            "checkpoint": checkpoint,
+            "loras": selected_loras(body, lora_ids),
+            "prompt": prompt,
+            "negative": negative,
+            "seed": read_seed(body, fresh=True),
+            "count": VARY_COUNT,
+            "width": width,
+            "height": height,
+            "out_width": width,
+            "out_height": height,
+            "draw_width": draw_width,
+            "draw_height": draw_height,
+            "source": annotation,
+            "denoise": VARY_DENOISE,
+        }
+
+    try:
+        pad = int(body.get("pad") or 256)
+    except (TypeError, ValueError) as error:
+        raise ValueError("足す幅を選んでください。") from error
+    if pad not in EXPAND_PADS:
+        raise ValueError("足す幅を選んでください。")
+    layout = expand_layout(width, height, pad)
+    ensure_memory(layout["out_w"], layout["out_h"], 1)
+    expanded_prompt = f"{prompt}{EXPAND_PROMPT_SUFFIX}"[:4000]
+    expanded_negative = f"{negative}{EXPAND_NEGATIVE_SUFFIX}".strip()[:4000]
+    return {
+        "checkpoint": checkpoint,
+        "loras": selected_loras(body, lora_ids),
+        "prompt": expanded_prompt,
+        "negative": expanded_negative,
+        "seed": read_seed(body, fresh=True),
+        "count": 1,
+        "width": width,
+        "height": height,
+        "out_width": layout["out_w"],
+        "out_height": layout["out_h"],
+        "source": annotation,
+        "layout": layout,
+    }
+
+
+def model_nodes(checkpoint: str, loras: list[tuple[str, float]]) -> tuple[dict[str, dict], list]:
     graph: dict[str, dict] = {
         "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": checkpoint}},
     }
@@ -586,6 +757,10 @@ def build_graph(body: dict) -> tuple[dict, int]:
         "class_type": "CLIPSetLastLayer",
         "inputs": {"clip": clip_ref, "stop_at_clip_layer": -2},
     }
+    return graph, model_ref
+
+
+def add_prompts(graph: dict[str, dict], prompt: str, negative: str) -> None:
     graph["4"] = {
         "class_type": "CLIPTextEncode",
         "inputs": {"text": prompt, "clip": ["3", 0]},
@@ -594,10 +769,9 @@ def build_graph(body: dict) -> tuple[dict, int]:
         "class_type": "CLIPTextEncode",
         "inputs": {"text": negative, "clip": ["3", 0]},
     }
-    graph["6"] = {
-        "class_type": "EmptyLatentImage",
-        "inputs": {"width": draw_width, "height": draw_height, "batch_size": count},
-    }
+
+
+def add_sampler(graph: dict[str, dict], model_ref: list, seed: int, latent_ref: list, denoise: float) -> None:
     graph["7"] = {
         "class_type": "KSampler",
         "inputs": {
@@ -609,32 +783,136 @@ def build_graph(body: dict) -> tuple[dict, int]:
             "scheduler": "normal",
             "positive": ["4", 0],
             "negative": ["5", 0],
-            "latent_image": ["6", 0],
-            "denoise": 1,
+            "latent_image": latent_ref,
+            "denoise": denoise,
         },
     }
     graph["8"] = {
         "class_type": "VAEDecode",
         "inputs": {"samples": ["7", 0], "vae": ["1", 2]},
     }
-    image_ref = ["8", 0]
-    if (draw_width, draw_height) != (width, height):
-        graph["10"] = {
-            "class_type": "ImageScale",
-            "inputs": {
-                "image": image_ref,
-                "upscale_method": "lanczos",
-                "width": width,
-                "height": height,
-                "crop": "disabled",
-            },
-        }
-        image_ref = ["10", 0]
+
+
+def add_scale(graph: dict[str, dict], image_ref: list, width: int, height: int, node_id: str) -> list:
+    graph[node_id] = {
+        "class_type": "ImageScale",
+        "inputs": {
+            "image": image_ref,
+            "upscale_method": "lanczos",
+            "width": width,
+            "height": height,
+            "crop": "disabled",
+        },
+    }
+    return [node_id, 0]
+
+
+def add_save(graph: dict[str, dict], image_ref: list, current: tuple[int, int], target: tuple[int, int]) -> None:
+    if current != target:
+        image_ref = add_scale(graph, image_ref, target[0], target[1], "10")
     graph["9"] = {
         "class_type": "SaveImage",
         "inputs": {"images": image_ref, "filename_prefix": "studio"},
     }
-    return graph, seed
+
+
+def build_create(spec: dict) -> dict:
+    graph, model_ref = model_nodes(spec["checkpoint"], spec["loras"])
+    add_prompts(graph, spec["prompt"], spec["negative"])
+    graph["6"] = {
+        "class_type": "EmptyLatentImage",
+        "inputs": {
+            "width": spec["draw_width"],
+            "height": spec["draw_height"],
+            "batch_size": spec["count"],
+        },
+    }
+    add_sampler(graph, model_ref, spec["seed"], ["6", 0], 1)
+    add_save(
+        graph,
+        ["8", 0],
+        (spec["draw_width"], spec["draw_height"]),
+        (spec["out_width"], spec["out_height"]),
+    )
+    return graph
+
+
+def build_vary(spec: dict) -> dict:
+    graph, model_ref = model_nodes(spec["checkpoint"], spec["loras"])
+    add_prompts(graph, spec["prompt"], spec["negative"])
+    graph["11"] = {
+        "class_type": "LoadImageOutput",
+        "inputs": {"image": spec["source"]},
+    }
+    image_ref = ["11", 0]
+    if (spec["width"], spec["height"]) != (spec["draw_width"], spec["draw_height"]):
+        image_ref = add_scale(graph, image_ref, spec["draw_width"], spec["draw_height"], "13")
+    graph["12"] = {
+        "class_type": "VAEEncode",
+        "inputs": {"pixels": image_ref, "vae": ["1", 2]},
+    }
+    graph["14"] = {
+        "class_type": "RepeatLatentBatch",
+        "inputs": {"samples": ["12", 0], "amount": spec["count"]},
+    }
+    add_sampler(graph, model_ref, spec["seed"], ["14", 0], spec["denoise"])
+    add_save(
+        graph,
+        ["8", 0],
+        (spec["draw_width"], spec["draw_height"]),
+        (spec["out_width"], spec["out_height"]),
+    )
+    return graph
+
+
+def build_expand(spec: dict) -> dict:
+    layout = spec["layout"]
+    graph, model_ref = model_nodes(spec["checkpoint"], spec["loras"])
+    add_prompts(graph, spec["prompt"], spec["negative"])
+    graph["11"] = {
+        "class_type": "LoadImageOutput",
+        "inputs": {"image": spec["source"]},
+    }
+    image_ref = ["11", 0]
+    if (spec["width"], spec["height"]) != (layout["content_w"], layout["content_h"]):
+        image_ref = add_scale(graph, image_ref, layout["content_w"], layout["content_h"], "13")
+    graph["15"] = {
+        "class_type": "ImagePadForOutpaint",
+        "inputs": {
+            "image": image_ref,
+            "left": layout["pad"],
+            "top": layout["pad"],
+            "right": layout["pad"],
+            "bottom": layout["pad"],
+            "feathering": layout["feather"],
+        },
+    }
+    graph["12"] = {
+        "class_type": "VAEEncodeForInpaint",
+        "inputs": {
+            "pixels": ["15", 0],
+            "vae": ["1", 2],
+            "mask": ["15", 1],
+            "grow_mask_by": 6,
+        },
+    }
+    add_sampler(graph, model_ref, spec["seed"], ["12", 0], 1)
+    add_save(graph, ["8", 0], (layout["draw_w"], layout["draw_h"]), (layout["out_w"], layout["out_h"]))
+    return graph
+
+
+def build_graph(body: dict) -> tuple[dict, int, tuple[int, int]]:
+    mode = str(body.get("mode") or "create")
+    if mode not in {"create", "vary", "expand"}:
+        raise ValueError("操作を確認してください。")
+    spec = generation_inputs(body, mode)
+    if mode == "vary":
+        graph = build_vary(spec)
+    elif mode == "expand":
+        graph = build_expand(spec)
+    else:
+        graph = build_create(spec)
+    return graph, spec["seed"], (spec["out_width"], spec["out_height"])
 
 
 def image_size(body: dict) -> tuple[int, int]:
@@ -735,6 +1013,7 @@ def job_status(prompt_id: str) -> dict:
             images.append({
                 "url": "/api/image?" + query,
                 "filename": filename,
+                "subfolder": image.get("subfolder") or "",
                 "path": str(folder / filename),
             })
     if not images and not status.get("completed"):
@@ -903,7 +1182,7 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def begin_generation(self, body: dict, *, for_muse: bool) -> None:
         try:
-            graph, seed = build_graph(body)
+            graph, seed, size = build_graph(body)
             result = comfy_json("POST", "/prompt", {"prompt": graph, "client_id": CLIENT_ID})
         except ValueError as error:
             print(f"生成を始められませんでした: {error}", flush=True)
@@ -917,7 +1196,7 @@ class StudioHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "ワークフローを開始できませんでした。"}, status=502)
             return
         remember_job(prompt_id, seed)
-        payload = {"prompt_id": prompt_id, "seed": seed}
+        payload = {"prompt_id": prompt_id, "seed": seed, "width": size[0], "height": size[1]}
         if for_muse:
             payload["status_url"] = f"/api/agent/jobs/{prompt_id}"
         self.send_json(payload)
@@ -971,6 +1250,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
@@ -987,8 +1267,14 @@ def note_progress(message: dict) -> None:
             _stage[prompt_id] = "画像を描いています"
         elif kind == "executing":
             node = str(data.get("node") or "")
-            if node in {"1", "2"}:
+            if node in {"1", "2"} or (node.isdigit() and 20 <= int(node) <= 29):
                 _stage[prompt_id] = "モデルを読み込んでいます"
+            elif node == "11":
+                _stage[prompt_id] = "元の絵を読み込んでいます"
+            elif node in {"12", "13", "14"}:
+                _stage[prompt_id] = "元の絵を取り込んでいます"
+            elif node == "15":
+                _stage[prompt_id] = "周りに余白を足しています"
             elif node == "7":
                 _stage[prompt_id] = "画像を描いています"
             elif node == "10":

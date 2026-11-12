@@ -106,6 +106,16 @@
         <button id="detail-info-scrim" type="button" aria-label="条件を閉じる"></button>
         <div class="detail-side">
           <button id="detail-close" type="button" aria-label="閉じる">×</button>
+          <h2>この絵から</h2>
+          <button id="detail-vary" type="button">似た絵を3枚作る</button>
+          <label class="label" for="detail-pad">周りに足す幅</label>
+          <select id="detail-pad">
+            <option value="128">少し</option>
+            <option value="256" selected>ふつう</option>
+            <option value="384">広く</option>
+          </select>
+          <button id="detail-expand" type="button">背景を広げて描く</button>
+          <p class="hint">似た絵は、今の構図を残して表情や細部を変えた3枚です。背景を広げるときは、今の絵はそのまま、外側だけ描き足します。</p>
           <h2>生成条件</h2>
           <dl id="detail-facts"></dl>
           <p id="detail-prompt"></p>

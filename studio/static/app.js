@@ -422,36 +422,48 @@ function showProgress(job) {
   }
 }
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  generateButton.disabled = true;
+let generating = false;
+const detailVary = document.querySelector("#detail-vary");
+const detailExpand = document.querySelector("#detail-expand");
+const detailPad = document.querySelector("#detail-pad");
+
+function setGenerating(active) {
+  generating = active;
+  generateButton.disabled = active;
+  detailVary.disabled = active;
+  detailExpand.disabled = active;
+}
+
+async function startJob(payload, settings) {
+  if (generating) return;
+  setGenerating(true);
   statusLine.classList.remove("error");
   progressWrap.hidden = false;
   progressBar.classList.add("indeterminate");
+  progressBar.style.width = "";
   progressLabel.textContent = "準備しています";
-  statusLine.textContent = "生成しています。モデルの読み込み中はバーが動き、描き始めるとステップが進みます。";
-  const seed = reuseSeed;
-  reuseSeed = null;
-  const settings = currentSettings(seed);
+  const waiting = {
+    vary: "似た絵を3枚作っています。元の絵を取り込んでから、ステップが進みます。",
+    expand: "周りの背景を描き足しています。元の絵を取り込んでから、ステップが進みます。",
+  };
+  statusLine.textContent = waiting[payload.mode] || "生成しています。モデルの読み込み中はバーが動き、描き始めるとステップが進みます。";
   try {
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        checkpoint: settings.checkpoint,
-        loras: settings.loras.map((item) => ({ id: item.id, strength: item.strength })),
-        prompt: settings.prompt,
-        negative: settings.negative,
-        ratio: settings.ratio,
-        width: settings.width,
-        height: settings.height,
-        count: settings.count,
-        seed,
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "生成を開始できませんでした。");
     settings.seed = data.seed;
+    if (data.width && data.height) {
+      settings.width = data.width;
+      settings.height = data.height;
+    }
+    if (payload.mode === "expand") {
+      settings.ratio = "custom";
+      settings.ratioLabel = `${settings.width}×${settings.height}`;
+    }
     await waitForJob(data.prompt_id, settings);
     setSheet(false);
   } catch (error) {
@@ -459,8 +471,28 @@ form.addEventListener("submit", async (event) => {
     statusLine.textContent = error.message;
   } finally {
     progressWrap.hidden = true;
-    generateButton.disabled = false;
+    setGenerating(false);
   }
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const seed = reuseSeed;
+  reuseSeed = null;
+  const settings = currentSettings(seed);
+  settings.kindLabel = "テキストから画像";
+  await startJob({
+    mode: "create",
+    checkpoint: settings.checkpoint,
+    loras: settings.loras.map((item) => ({ id: item.id, strength: item.strength })),
+    prompt: settings.prompt,
+    negative: settings.negative,
+    ratio: settings.ratio,
+    width: settings.width,
+    height: settings.height,
+    count: settings.count,
+    seed,
+  }, settings);
 });
 
 async function waitForJob(promptId, settings) {
@@ -534,7 +566,8 @@ function addSession(images, settings) {
   label.textContent = settings.prompt;
   const meta = document.createElement("p");
   meta.className = "session-meta";
-  meta.textContent = `${settings.checkpointName} · ${settings.width}×${settings.height}`;
+  const kind = settings.kindLabel && settings.kindLabel !== "テキストから画像" ? ` · ${settings.kindLabel}` : "";
+  meta.textContent = `${settings.checkpointName} · ${settings.width}×${settings.height}${kind}`;
   copy.append(label, meta);
   const reuse = document.createElement("button");
   reuse.type = "button";
@@ -634,11 +667,15 @@ function showDetail() {
   detailNext.hidden = !multiple;
   detail.classList.toggle("landscape", Number(settings.width) > Number(settings.height));
   detailImage.src = image.url;
-  detailFacts.replaceChildren(
-    fact("創作タイプ", "テキストから画像"),
+  const facts = [
+    fact("創作タイプ", settings.kindLabel || "テキストから画像"),
     fact("作成日時", settings.created),
     fact("比率", settings.ratioLabel),
     fact("画像サイズ", `${settings.width}×${settings.height}`),
+  ];
+  if (settings.padLabel) facts.push(fact("足した幅", settings.padLabel));
+  detailFacts.replaceChildren(
+    ...facts,
     fact("シード", String(settings.seed)),
     fact("サンプラー", "Euler a"),
     fact("ステップ", "28"),
@@ -654,6 +691,10 @@ function showDetail() {
     ? `${settings.prompt}\n\n避けたい内容: ${settings.negative}`
     : settings.prompt;
   detail.dataset.settings = JSON.stringify(settings);
+  detail.dataset.source = JSON.stringify({
+    filename: image.filename || "",
+    subfolder: image.subfolder || "",
+  });
 }
 
 function moveDetail(step) {
@@ -679,6 +720,7 @@ detail.addEventListener("click", (event) => {
   if (event.target === detail) detail.close();
 });
 detail.addEventListener("keydown", (event) => {
+  if (event.target.closest("select, textarea, input")) return;
   if (event.key === "ArrowRight") {
     event.preventDefault();
     moveDetail(1);
@@ -708,6 +750,41 @@ document.querySelector("#detail-rerun").addEventListener("click", () => {
   applySettings(settings);
   form.requestSubmit();
 });
+
+function runFromDetail(mode) {
+  if (generating) return;
+  const settings = JSON.parse(detail.dataset.settings || "{}");
+  const source = JSON.parse(detail.dataset.source || "{}");
+  if (!source.filename) {
+    statusLine.classList.add("error");
+    statusLine.textContent = "この絵からは作れません。もう一度生成した絵を開いてください。";
+    return;
+  }
+  const padOption = detailPad.selectedOptions[0];
+  detail.close();
+  const next = {
+    ...settings,
+    created: new Date().toLocaleString("ja-JP"),
+    kindLabel: mode === "vary" ? "似た絵" : "背景を拡張",
+    padLabel: mode === "expand" && padOption ? padOption.textContent : "",
+  };
+  const payload = {
+    mode,
+    checkpoint: settings.checkpoint,
+    loras: (settings.loras || []).map((item) => ({ id: item.id, strength: item.strength })),
+    prompt: settings.prompt,
+    negative: settings.negative,
+    ratio: settings.ratio || "custom",
+    width: settings.width,
+    height: settings.height,
+    source,
+  };
+  if (mode === "expand") payload.pad = Number(detailPad.value);
+  startJob(payload, next);
+}
+
+detailVary.addEventListener("click", () => runFromDetail("vary"));
+detailExpand.addEventListener("click", () => runFromDetail("expand"));
 
 function applySettings(settings) {
   checkpointSelect.value = settings.checkpoint;

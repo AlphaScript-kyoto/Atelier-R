@@ -439,6 +439,7 @@ dialog.landscape #detail-image {
 }
 .detail-side { position: relative; padding: 20px 18px 24px; overflow: auto; }
 .detail-side h2 { margin: 0 0 12px; font-size: 18px; }
+.detail-side h2 ~ h2 { margin-top: 8px; }
 #detail-close {
   position: absolute;
   top: 10px;
@@ -468,8 +469,16 @@ dialog.landscape #detail-image {
   line-height: 1.5;
   white-space: pre-wrap;
 }
-#detail-rerun, #detail-folder { display: block; width: 100%; margin-top: 8px; }
-#detail-rerun { background: var(--accent); border-color: var(--accent); font-weight: 700; }
+#detail-vary, #detail-expand, #detail-rerun, #detail-folder { display: block; width: 100%; margin-top: 8px; }
+#detail-vary, #detail-expand, #detail-rerun {
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+#detail-expand { background: #2f6f73; border-color: #2f6f73; }
+#detail-vary:disabled, #detail-expand:disabled, #detail-rerun:disabled { opacity: 0.55; cursor: wait; }
+.detail-side .label { margin-top: 14px; }
+.detail-side .hint { margin: 10px 0 18px; }
 
 .session-meta {
   margin: 2px 0 0;
