@@ -1,5 +1,4 @@
 const checkpointSelect = document.querySelector("#checkpoint");
-const loraSelect = document.querySelector("#lora");
 const loraStack = document.querySelector("#lora-stack");
 const ratioBox = document.querySelector("#ratios");
 const resolutionSelect = document.querySelector("#resolution");
@@ -111,8 +110,10 @@ function renderExtraWords(words) {
   paintTriggers();
 }
 
-const checkpointGrid = document.querySelector("#checkpoint-grid");
-const loraPicker = document.querySelector("#lora-picker");
+const checkpointCurrent = document.querySelector("#checkpoint-current");
+const picker = document.querySelector("#picker");
+const pickerGrid = document.querySelector("#picker-grid");
+const pickerTitle = document.querySelector("#picker-title");
 const cardEditor = document.querySelector("#card-editor");
 const cardForm = document.querySelector("#card-form");
 const cardHeading = document.querySelector("#card-heading");
@@ -166,24 +167,68 @@ function modelTile(item, pressed, onPick) {
   return tile;
 }
 
-function renderCheckpointGrid() {
-  checkpointGrid.replaceChildren();
-  const current = checkpointSelect.value;
-  checkpointItems.forEach((item) => {
-    checkpointGrid.appendChild(modelTile(item, item.id === current, () => {
-      checkpointSelect.value = item.id;
-      renderCheckpointGrid();
-    }));
+function renderCheckpointCurrent() {
+  checkpointCurrent.replaceChildren();
+  const item = checkpointItems.find((entry) => entry.id === checkpointSelect.value);
+  if (!item) return;
+  const card = document.createElement("div");
+  card.className = "current-model";
+  if (item.preview) {
+    const image = document.createElement("img");
+    image.src = item.preview;
+    image.alt = "";
+    card.appendChild(image);
+  } else {
+    const fallback = document.createElement("span");
+    fallback.className = "current-fallback";
+    fallback.textContent = item.name.slice(0, 2);
+    card.appendChild(fallback);
+  }
+  const name = document.createElement("strong");
+  name.textContent = item.name;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "switch-model";
+  button.textContent = "切り替え";
+  button.addEventListener("click", () => openPicker("checkpoints"));
+  card.append(name, button);
+  checkpointCurrent.appendChild(card);
+}
+
+function renderPicker() {
+  if (!picker.open) return;
+  pickerGrid.replaceChildren();
+  if (picker.dataset.kind === "checkpoints") {
+    const current = checkpointSelect.value;
+    checkpointItems.forEach((item) => {
+      pickerGrid.appendChild(modelTile(item, item.id === current, () => {
+        checkpointSelect.value = item.id;
+        renderCheckpointCurrent();
+        picker.close();
+      }));
+    });
+    return;
+  }
+  const used = new Set(selectedLoras.map((item) => item.id));
+  loraInfo.forEach((item) => {
+    pickerGrid.appendChild(modelTile(item, used.has(item.id), () => addLora(item.id)));
   });
 }
 
-function renderLoraChoices() {
-  loraPicker.replaceChildren();
-  const used = new Set(selectedLoras.map((item) => item.id));
-  loraInfo.forEach((item) => {
-    loraPicker.appendChild(modelTile(item, used.has(item.id), () => addLora(item.id)));
-  });
+function openPicker(kind) {
+  picker.dataset.kind = kind;
+  pickerTitle.textContent = kind === "checkpoints" ? "基礎モデル" : "LoRA を追加";
+  if (!picker.open) picker.showModal();
+  renderPicker();
 }
+
+function closePicker() {
+  if (picker.open) picker.close();
+}
+
+document.querySelector("#lora-add").addEventListener("click", () => openPicker("loras"));
+document.querySelector("#picker-close").addEventListener("click", closePicker);
+document.querySelector("#picker-scrim").addEventListener("click", closePicker);
 
 function openCardEditor(item) {
   cardEditor.dataset.kind = item.kind;
@@ -220,7 +265,7 @@ cardForm.addEventListener("submit", async (event) => {
       item.preview = data.preview || "";
       item.url = data.url || "";
     }
-    renderCheckpointGrid();
+    renderCheckpointCurrent();
     renderLoraStack();
     cardEditor.close();
     statusLine.classList.remove("error");
@@ -341,7 +386,7 @@ function renderLoraStack() {
     });
     loraStack.appendChild(card);
   });
-  renderLoraChoices();
+  renderPicker();
   paintTriggers();
 }
 
@@ -491,7 +536,7 @@ async function loadOptions() {
     checkpointSelect.appendChild(option);
   });
   if (!checkpointSelect.value && checkpointItems[0]) checkpointSelect.value = checkpointItems[0].id;
-  renderCheckpointGrid();
+  renderCheckpointCurrent();
   loraInfo = data.loras.map((item) => ({ ...item, kind: "loras" }));
   selectedLoras = selectedLoras.filter((item) => data.loras.some((lora) => lora.id === item.id));
   if (!selectedLoras.length && data.loras.some((item) => item.id === "olivia.safetensors")) {
@@ -939,7 +984,7 @@ detailExpand.addEventListener("click", () => runFromDetail("expand"));
 
 function applySettings(settings) {
   checkpointSelect.value = settings.checkpoint;
-  renderCheckpointGrid();
+  renderCheckpointCurrent();
   if (Array.isArray(settings.loras)) {
     selectedLoras = settings.loras.map((item) => ({ id: item.id, strength: Number(item.strength) }));
   } else if (settings.lora) {

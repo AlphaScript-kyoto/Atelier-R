@@ -26,17 +26,16 @@
     <section>
       <span class="label">基礎モデル</span>
       <select id="checkpoint" hidden></select>
-      <div id="checkpoint-grid" class="model-grid"></div>
+      <div id="checkpoint-current"></div>
     </section>
 
     <section>
       <div class="section-head">
         <span class="label">LoRA</span>
+        <button id="lora-add" type="button">追加する</button>
       </div>
-      <div id="lora-picker" class="model-grid"></div>
       <div id="lora-stack"></div>
-      <select id="lora" hidden aria-label="LoRA を追加"></select>
-      <p class="hint">サムネイルを押すと足します。カーソルを合わせると、画像を入れるボタンと、URLがあるときは詳細が出ます。同時に 5 つまでです。</p>
+      <p class="hint">追加するを押すと、サムネイルの一覧が出ます。同時に 5 つまでです。カーソルを合わせると、画像を入れるボタンと、URLがあるときは詳細が出ます。</p>
     </section>
 
     <section>
@@ -128,7 +127,16 @@
       </div>
     </div>
   </dialog>
-  <dialog id="card-editor">
+  <dialog id="picker">
+    <button id="picker-scrim" type="button" aria-label="閉じる"></button>
+    <div class="picker-panel">
+      <div class="picker-head">
+        <h2 id="picker-title">基礎モデル</h2>
+        <button id="picker-close" type="button">閉じる</button>
+      </div>
+      <div id="picker-grid" class="model-grid"></div>
+    </div>
+  </dialog>
     <form id="card-form" method="dialog">
       <h2 id="card-heading">サムネイル</h2>
       <label for="card-file">画像（PNG、JPEG、WebP）</label>
