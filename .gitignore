@@ -10,6 +10,10 @@ models/
 __pycache__/
 *.pyc
 
+# 画面で付けたサムネイルと、詳細ボタンのURL。この PC にだけ置く
+studio/model_cards.json
+studio/static/previews/
+
 # Muse 用の合言葉。この PC にだけ置く
 agent_token.txt
 

@@ -35,19 +35,23 @@ let orientation = "portrait";
 let applyingNamedSize = false;
 let selectedCount = 1;
 let ratioItems = [];
+let checkpointItems = [];
 let loraInfo = [];
 let selectedLoras = [];
 const MAX_LORAS = 5;
 let reuseSeed = null;
 let outputFolder = "";
 
-loraSelect.addEventListener("change", () => {
-  const id = loraSelect.value;
-  loraSelect.value = "";
-  if (!id || selectedLoras.some((item) => item.id === id) || selectedLoras.length >= MAX_LORAS) return;
+function addLora(id) {
+  if (!id || selectedLoras.some((item) => item.id === id)) return;
+  if (selectedLoras.length >= MAX_LORAS) {
+    statusLine.classList.add("error");
+    statusLine.textContent = "LoRA は同時に 5 つまでです。";
+    return;
+  }
   selectedLoras.push({ id, strength: 1 });
   renderLoraStack();
-});
+}
 promptBox.addEventListener("input", paintTriggers);
 
 function loraById(id) {
@@ -107,20 +111,129 @@ function renderExtraWords(words) {
   paintTriggers();
 }
 
-function renderLoraChoices() {
-  const used = new Set(selectedLoras.map((item) => item.id));
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = selectedLoras.length >= MAX_LORAS ? "5つまでです" : "追加する";
-  loraSelect.replaceChildren(placeholder);
-  loraInfo.filter((item) => !used.has(item.id)).forEach((item) => {
-    const option = document.createElement("option");
-    option.value = item.id;
-    option.textContent = item.name;
-    loraSelect.appendChild(option);
-  });
-  loraSelect.disabled = selectedLoras.length >= MAX_LORAS || loraSelect.options.length === 1;
+const checkpointGrid = document.querySelector("#checkpoint-grid");
+const loraPicker = document.querySelector("#lora-picker");
+const cardEditor = document.querySelector("#card-editor");
+const cardForm = document.querySelector("#card-form");
+const cardHeading = document.querySelector("#card-heading");
+const cardFile = document.querySelector("#card-file");
+const cardUrl = document.querySelector("#card-url");
+
+function modelTile(item, pressed, onPick) {
+  const tile = document.createElement("div");
+  tile.className = "model-tile";
+  if (pressed) tile.classList.add("is-selected");
+  const hit = document.createElement("button");
+  hit.type = "button";
+  hit.className = "tile-hit";
+  hit.setAttribute("aria-pressed", String(pressed));
+  hit.setAttribute("aria-label", item.name);
+  if (item.preview) {
+    const image = document.createElement("img");
+    image.src = item.preview;
+    image.alt = "";
+    hit.appendChild(image);
+  } else {
+    const fallback = document.createElement("span");
+    fallback.className = "tile-fallback";
+    fallback.textContent = item.name.slice(0, 2);
+    hit.appendChild(fallback);
+  }
+  const name = document.createElement("span");
+  name.className = "tile-name";
+  name.textContent = item.name;
+  hit.appendChild(name);
+  hit.addEventListener("click", onPick);
+  tile.appendChild(hit);
+  const actions = document.createElement("div");
+  actions.className = "tile-actions";
+  if (item.url) {
+    const detail = document.createElement("a");
+    detail.className = "tile-detail";
+    detail.href = item.url;
+    detail.target = "_blank";
+    detail.rel = "noopener noreferrer";
+    detail.textContent = "詳細";
+    actions.appendChild(detail);
+  }
+  const thumb = document.createElement("button");
+  thumb.type = "button";
+  thumb.className = "tile-thumb";
+  thumb.textContent = "サムネ";
+  thumb.addEventListener("click", () => openCardEditor(item));
+  actions.appendChild(thumb);
+  tile.appendChild(actions);
+  return tile;
 }
+
+function renderCheckpointGrid() {
+  checkpointGrid.replaceChildren();
+  const current = checkpointSelect.value;
+  checkpointItems.forEach((item) => {
+    checkpointGrid.appendChild(modelTile(item, item.id === current, () => {
+      checkpointSelect.value = item.id;
+      renderCheckpointGrid();
+    }));
+  });
+}
+
+function renderLoraChoices() {
+  loraPicker.replaceChildren();
+  const used = new Set(selectedLoras.map((item) => item.id));
+  loraInfo.forEach((item) => {
+    loraPicker.appendChild(modelTile(item, used.has(item.id), () => addLora(item.id)));
+  });
+}
+
+function openCardEditor(item) {
+  cardEditor.dataset.kind = item.kind;
+  cardEditor.dataset.id = item.id;
+  cardHeading.textContent = item.name;
+  cardUrl.value = item.url || "";
+  cardFile.value = "";
+  document.querySelector("#card-error").hidden = true;
+  if (!cardEditor.open) cardEditor.showModal();
+}
+
+cardForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const kind = cardEditor.dataset.kind;
+  const id = cardEditor.dataset.id;
+  const body = new FormData();
+  body.set("kind", kind);
+  body.set("id", id);
+  body.set("url", cardUrl.value.trim());
+  if (cardFile.files[0]) body.set("image", cardFile.files[0]);
+  cardForm.querySelector("#card-save").disabled = true;
+  try {
+    const response = await fetch("/api/model-card", { method: "POST", body });
+    const data = await response.json();
+    const cardError = document.querySelector("#card-error");
+    if (!response.ok) {
+      cardError.hidden = false;
+      cardError.textContent = data.error || "保存できませんでした。";
+      return;
+    }
+    const list = kind === "checkpoints" ? checkpointItems : loraInfo;
+    const item = list.find((entry) => entry.id === id);
+    if (item) {
+      item.preview = data.preview || "";
+      item.url = data.url || "";
+    }
+    renderCheckpointGrid();
+    renderLoraStack();
+    cardEditor.close();
+    statusLine.classList.remove("error");
+    statusLine.textContent = "サムネイルを保存しました。";
+  } catch (error) {
+    const cardError = document.querySelector("#card-error");
+    cardError.hidden = false;
+    cardError.textContent = error.message;
+  } finally {
+    cardForm.querySelector("#card-save").disabled = false;
+  }
+});
+document.querySelector("#card-cancel").addEventListener("click", () => cardEditor.close());
 
 function triggerSection(title, actionLabel, insertWords, chipWords) {
   const section = document.createElement("div");
@@ -368,15 +481,18 @@ async function loadOptions() {
     setTimeout(loadOptions, 2000);
     return;
   }
+  checkpointItems = data.checkpoints.map((item) => ({ ...item, kind: "checkpoints" }));
   checkpointSelect.replaceChildren();
-  data.checkpoints.forEach((item) => {
+  checkpointItems.forEach((item) => {
     const option = document.createElement("option");
     option.value = item.id;
     option.textContent = item.name;
     if (item.name === "Holy Mix") option.selected = true;
     checkpointSelect.appendChild(option);
   });
-  loraInfo = data.loras;
+  if (!checkpointSelect.value && checkpointItems[0]) checkpointSelect.value = checkpointItems[0].id;
+  renderCheckpointGrid();
+  loraInfo = data.loras.map((item) => ({ ...item, kind: "loras" }));
   selectedLoras = selectedLoras.filter((item) => data.loras.some((lora) => lora.id === item.id));
   if (!selectedLoras.length && data.loras.some((item) => item.id === "olivia.safetensors")) {
     selectedLoras = [{ id: "olivia.safetensors", strength: 1 }];
@@ -823,6 +939,7 @@ detailExpand.addEventListener("click", () => runFromDetail("expand"));
 
 function applySettings(settings) {
   checkpointSelect.value = settings.checkpoint;
+  renderCheckpointGrid();
   if (Array.isArray(settings.loras)) {
     selectedLoras = settings.loras.map((item) => ({ id: item.id, strength: Number(item.strength) }));
   } else if (settings.lora) {

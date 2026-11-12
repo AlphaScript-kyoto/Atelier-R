@@ -5,7 +5,9 @@ from __future__ import annotations
 import atexit
 import base64
 import ctypes
+import hashlib
 import hmac
+import io
 import json
 import mimetypes
 import os
@@ -29,6 +31,9 @@ ROOT = Path(__file__).resolve().parents[1]
 COMFY_DIR = ROOT / "ComfyUI"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EXTRA_WORDS_PATH = Path(__file__).resolve().parent / "extra_words.txt"
+CARDS_PATH = Path(__file__).resolve().parent / "model_cards.json"
+PREVIEW_DIR = STATIC_DIR / "previews"
+_cards_lock = threading.Lock()
 AGENT_TOKEN_PATH = ROOT / "agent_token.txt"
 COMFY_URL = "http://127.0.0.1:8188"
 STUDIO_HOST = "127.0.0.1"
@@ -696,6 +701,137 @@ def build_random_prompt(current: str, hints: list | None = None) -> dict:
     return {"prompt": remix_tags(lists), "source_count": picture_count}
 
 
+def read_cards() -> dict:
+    empty = {"checkpoints": {}, "loras": {}}
+    if not CARDS_PATH.is_file():
+        return empty
+    try:
+        data = json.loads(CARDS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return empty
+    if not isinstance(data, dict):
+        return empty
+    cards = {}
+    for kind in ("checkpoints", "loras"):
+        bucket = data.get(kind)
+        cards[kind] = bucket if isinstance(bucket, dict) else {}
+    return cards
+
+
+def public_preview(stored: str, fallback: str = "") -> str:
+    name = Path(stored).name if stored else ""
+    preview = PREVIEW_DIR / name
+    if name and preview.is_file():
+        return "/previews/" + name
+    if fallback.startswith("/") and ".." not in fallback:
+        return fallback
+    return ""
+
+
+def card_fields(cards: dict, kind: str, model_id: str, fallback: str = "") -> dict:
+    item = (cards.get(kind) or {}).get(model_id) or {}
+    if not isinstance(item, dict):
+        item = {}
+    url = str(item.get("url") or "").strip()
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        url = ""
+    return {
+        "preview": public_preview(str(item.get("preview") or ""), fallback),
+        "url": url,
+    }
+
+
+def parse_multipart(body: bytes, boundary: str) -> dict:
+    marker = b"--" + boundary.encode("utf-8")
+    fields: dict = {}
+    for chunk in body.split(marker):
+        chunk = chunk.strip(b"\r\n")
+        if not chunk or chunk == b"--":
+            continue
+        if chunk.endswith(b"--"):
+            chunk = chunk[:-2].rstrip(b"\r\n")
+        header, sep, data = chunk.partition(b"\r\n\r\n")
+        if not sep:
+            continue
+        if data.endswith(b"\r\n"):
+            data = data[:-2]
+        disposition = header.decode("utf-8", "replace")
+        name = ""
+        filename = ""
+        for piece in disposition.split(";"):
+            piece = piece.strip()
+            if piece.startswith("name="):
+                name = piece[5:].strip('"')
+            elif piece.startswith("filename="):
+                filename = piece[9:].strip('"')
+        if not name:
+            continue
+        if filename:
+            fields[name] = {"filename": Path(filename).name, "data": data}
+        else:
+            fields[name] = data.decode("utf-8", "replace")
+    return fields
+
+
+def write_preview(kind: str, model_id: str, data: bytes) -> str:
+    if len(data) > 5_000_000:
+        raise ValueError("画像が大きすぎます。5MBまでです。")
+    is_png = data.startswith(b"\x89PNG\r\n\x1a\n")
+    is_jpeg = data.startswith(b"\xff\xd8\xff")
+    is_webp = data.startswith(b"RIFF") and data[8:12] == b"WEBP"
+    if not (is_png or is_jpeg or is_webp):
+        raise ValueError("画像は PNG、JPEG、WebP にしてください。")
+    from PIL import Image
+
+    try:
+        image = Image.open(io.BytesIO(data))
+        image = image.convert("RGB")
+    except Exception as error:
+        raise ValueError("画像を読めませんでした。") from error
+    image.thumbnail((640, 800))
+    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    name = hashlib.sha256(f"{kind}:{model_id}".encode()).hexdigest()[:20] + ".jpg"
+    image.save(PREVIEW_DIR / name, "JPEG", quality=85)
+    return name
+
+
+def known_model_ids(kind: str) -> set[str]:
+    path = "/models/checkpoints" if kind == "checkpoints" else "/models/loras"
+    names = comfy_json("GET", path)
+    if not isinstance(names, list):
+        return set()
+    return {name for name in names if isinstance(name, str)}
+
+
+def save_model_card(kind: str, model_id: str, url: str, image: bytes | None) -> dict:
+    if kind not in {"checkpoints", "loras"}:
+        raise ValueError("種類を確認してください。")
+    if not model_id or Path(model_id).name != model_id:
+        raise ValueError("モデル名を確認してください。")
+    if model_id not in known_model_ids(kind):
+        raise ValueError("そのファイルは一覧にありません。")
+    url = url.strip()
+    if url:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or len(url) > 500:
+            raise ValueError("詳細のURLは http か https のページにしてください。")
+    with _cards_lock:
+        cards = read_cards()
+        bucket = cards.setdefault(kind, {})
+        current = bucket.get(model_id) if isinstance(bucket.get(model_id), dict) else {}
+        preview_name = str(current.get("preview") or "")
+        if image:
+            preview_name = write_preview(kind, model_id, image)
+        elif not preview_name and not url:
+            raise ValueError("画像か、ダウンロード元のURLを入れてください。")
+        bucket[model_id] = {"preview": preview_name, "url": url}
+        CARDS_PATH.write_text(json.dumps(cards, ensure_ascii=False, indent=2), encoding="utf-8")
+    fallback = LORA_CATALOG.get(model_id, {}).get("preview", "") if kind == "loras" else ""
+    shown = card_fields({"checkpoints": {}, "loras": {}, kind: {model_id: bucket[model_id]}}, kind, model_id, fallback)
+    return {"ok": True, "preview": shown["preview"], "url": shown["url"]}
+
+
 def list_options() -> dict:
     not_ready = {
         "ready": False,
@@ -712,17 +848,22 @@ def list_options() -> dict:
         loras = comfy_json("GET", "/models/loras")
     except RuntimeError:
         return not_ready
+    cards = read_cards()
     return {
         "ready": True,
         "checkpoints": [
-            {"id": name, "name": CHECKPOINT_NAMES.get(name, Path(name).stem)}
+            {
+                "id": name,
+                "name": CHECKPOINT_NAMES.get(name, Path(name).stem),
+                **card_fields(cards, "checkpoints", name),
+            }
             for name in checkpoints
         ],
         "loras": [
             {
                 "id": name,
                 "name": LORA_CATALOG.get(name, {}).get("name", Path(name).stem),
-                "preview": LORA_CATALOG.get(name, {}).get("preview", ""),
+                **card_fields(cards, "loras", name, LORA_CATALOG.get(name, {}).get("preview", "")),
                 "triggers": LORA_CATALOG.get(name, {}).get("triggers", []),
                 "shared": LORA_CATALOG.get(name, {}).get("shared", []),
                 "outfits": LORA_CATALOG.get(name, {}).get("outfits", []),
@@ -1496,6 +1637,32 @@ class StudioHandler(BaseHTTPRequestHandler):
             return None
         return body
 
+    def read_model_card(self) -> dict | None:
+        if not self.from_studio_screen():
+            self.send_json({"error": "この操作は Atelier R の画面からだけ受け付けます。"}, status=403)
+            return None
+        content_type = self.headers.get("Content-Type") or ""
+        if "multipart/form-data" not in content_type.lower():
+            self.send_json({"error": "送信形式が正しくありません。"}, status=415)
+            return None
+        boundary = ""
+        for piece in content_type.split(";"):
+            piece = piece.strip()
+            if piece.lower().startswith("boundary="):
+                boundary = piece.split("=", 1)[1].strip().strip('"')
+        if not boundary:
+            self.send_json({"error": "送信形式が正しくありません。"}, status=400)
+            return None
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self.send_json({"error": "送信内容を読めませんでした。"}, status=400)
+            return None
+        if length <= 0 or length > 6_000_000:
+            self.send_json({"error": "画像が大きすぎます。5MBまでです。"}, status=400)
+            return None
+        return parse_multipart(self.rfile.read(length), boundary)
+
     def do_POST(self) -> None:
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/random-prompt":
@@ -1508,6 +1675,29 @@ class StudioHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "文章を読めませんでした。"}, status=400)
                 return
             self.send_json(build_random_prompt(current[:4000], hints))
+            return
+        if path == "/api/model-card":
+            fields = self.read_model_card()
+            if fields is None:
+                return
+            image = fields.get("image")
+            image_bytes = image.get("data") if isinstance(image, dict) else None
+            if image_bytes == b"":
+                image_bytes = None
+            try:
+                saved = save_model_card(
+                    str(fields.get("kind") or ""),
+                    str(fields.get("id") or ""),
+                    str(fields.get("url") or ""),
+                    image_bytes,
+                )
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+                return
+            except RuntimeError:
+                self.send_json({"error": "モデル一覧を確認できませんでした。"}, status=502)
+                return
+            self.send_json(saved)
             return
         if path == "/api/open-folder":
             if self.read_json_object(local_only=True) is None:

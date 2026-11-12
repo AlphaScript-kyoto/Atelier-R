@@ -97,13 +97,15 @@ Invoke-RestMethod http://127.0.0.1:8189/api/agent/options -Headers $headers
 
 ### 2. 左で選ぶ
 
-1. **基礎モデル** で次のどれかを選びます。最初は Holy Mix です。置けるのは SDXL のチェックポイントだけです。
+1. **基礎モデル** は、左のサムネイルから選びます。最初は Holy Mix です。置けるのは SDXL のチェックポイントだけです。
    - Holy Mix（`3_HolyMix_00002_.safetensors`）
    - EstellaXL（`2_EstellaXL.safetensors`）
    - AnimeMix v8（`1_animemixillustrious_v8.safetensors`）
    - n4mik4（`n4mik4_SFW and NSFW.safetensors`）
    - uncAni（`uncAni sfw and nsfw.safetensors`）
-2. **LoRA** の **追加する** で一覧から足します。足したカードは残るので、もう一度 **追加する** で別の LoRA を重ねられます。同時に 5 つまでです。それぞれの強さは 0 から 2 です。言葉をクリックすると、中央の入力欄の後ろに足されます。スマホでは、この言葉を押してもキーボードは出ません。キーボードは入力欄をタップしたときだけ出ます。**すべて使用** は、そのカードの Trigger Words の言葉をまとめて足します。衣装が分かれているときは、衣装名の横の **この衣装** で、その衣装だけを足します。選んだだけでは、文章の先頭には自動で入りません。最初は Olivia von Ecclesia が 1 つ入っています。
+
+   カードにカーソルを合わせると **サムネ** が出ます。そこから画像と、ダウンロード元のページの URL を保存できます。URLを保存したカードには **詳細** も出て、押すと新しいタブでそのページを開きます。画像がまだないカードは、名前の先頭2文字だけ出ます。スマホでは、カーソルを合わせなくても **サムネ** と **詳細** が見えます。保存した画像は `studio/static/previews/`、URLは `studio/model_cards.json` に残り、どちらも GitHub には入りません。
+2. **LoRA** も、同じサムネイルから足します。足したカードは下に残るので、別のサムネイルを押すと重ねられます。同時に 5 つまでです。それぞれの強さは 0 から 2 です。言葉をクリックすると、中央の入力欄の後ろに足されます。スマホでは、この言葉を押してもキーボードは出ません。キーボードは入力欄をタップしたときだけ出ます。**すべて使用** は、そのカードの Trigger Words の言葉をまとめて足します。衣装が分かれているときは、衣装名の横の **この衣装** で、その衣装だけを足します。選んだだけでは、文章の先頭には自動で入りません。最初は Olivia von Ecclesia が 1 つ入っています。オリヴィアだけは、はじめからサムネイルがあります。
    - liv (long blonde wavy hair, emerald eyes)
    - red and black royal dress with gold trim
    - ornate black gauntlets on both arms
