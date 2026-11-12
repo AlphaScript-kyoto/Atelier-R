@@ -600,24 +600,32 @@ def expand_layout(width: int, height: int, pad: int) -> dict[str, int]:
         pad = (DIRECT_LONG_SIDE - 512) // 2 // 8 * 8
         room = DIRECT_LONG_SIDE - 2 * pad
     scale = min(1.0, room / max(width, height))
-    content_w = align_down(width * scale)
-    content_h = align_down(height * scale)
-    draw_w = content_w + 2 * pad
-    draw_h = content_h + 2 * pad
-    while max(draw_w, draw_h) > DIRECT_LONG_SIDE and (content_w > 64 or content_h > 64):
-        if content_w >= content_h and content_w > 64:
+    if width >= height:
+        content_w = align_down(width * scale)
+        content_h = max(64, align_down(height * content_w / width))
+    else:
+        content_h = align_down(height * scale)
+        content_w = max(64, align_down(width * content_h / height))
+    while content_w + 2 * pad > DIRECT_LONG_SIDE or content_h + 2 * pad > DIRECT_LONG_SIDE:
+        if width >= height and content_w > 64:
             content_w -= 8
+            content_h = max(64, align_down(height * content_w / width))
         elif content_h > 64:
             content_h -= 8
+            content_w = max(64, align_down(width * content_h / height))
         else:
             break
-        draw_w = content_w + 2 * pad
-        draw_h = content_h + 2 * pad
-    out_w = align_down(width + (2 * pad) / (content_w / width))
-    out_h = align_down(height + (2 * pad) / (content_h / height))
+    draw_w = content_w + 2 * pad
+    draw_h = content_h + 2 * pad
+    restore = width / content_w
+    out_w = max(64, int(round(draw_w * restore / 8)) * 8)
+    out_h = max(64, int(round(draw_h * restore / 8)) * 8)
     out_w, out_h = fit_output(out_w, out_h)
     if out_w <= width or out_h <= height:
         raise ValueError("この絵はすでに大きいので、周りを広げる余白が足りません。もう少し小さい絵で試してください。")
+    paste_x = max(0, (out_w - width) // 2)
+    paste_y = max(0, (out_h - height) // 2)
+    blend = min(96, paste_x, paste_y, width // 8, height // 8)
     return {
         "content_w": content_w,
         "content_h": content_h,
@@ -626,7 +634,10 @@ def expand_layout(width: int, height: int, pad: int) -> dict[str, int]:
         "draw_h": draw_h,
         "out_w": out_w,
         "out_h": out_h,
-        "feather": min(32, max(8, pad // 4)),
+        "feather": min(64, max(24, pad // 4), min(content_w, content_h) // 6),
+        "paste_x": paste_x,
+        "paste_y": paste_y,
+        "blend": max(16, blend),
     }
 
 
@@ -897,7 +908,39 @@ def build_expand(spec: dict) -> dict:
         },
     }
     add_sampler(graph, model_ref, spec["seed"], ["12", 0], 1)
-    add_save(graph, ["8", 0], (layout["draw_w"], layout["draw_h"]), (layout["out_w"], layout["out_h"]))
+    painted = ["8", 0]
+    if (layout["draw_w"], layout["draw_h"]) != (layout["out_w"], layout["out_h"]):
+        painted = add_scale(graph, painted, layout["out_w"], layout["out_h"], "10")
+    # 縮小して描くと境目がずれるので、保存サイズで元の絵を中央へ戻す。
+    graph["16"] = {
+        "class_type": "SolidMask",
+        "inputs": {"value": 1.0, "width": spec["width"], "height": spec["height"]},
+    }
+    graph["17"] = {
+        "class_type": "FeatherMask",
+        "inputs": {
+            "mask": ["16", 0],
+            "left": layout["blend"],
+            "top": layout["blend"],
+            "right": layout["blend"],
+            "bottom": layout["blend"],
+        },
+    }
+    graph["18"] = {
+        "class_type": "ImageCompositeMasked",
+        "inputs": {
+            "destination": painted,
+            "source": ["11", 0],
+            "x": layout["paste_x"],
+            "y": layout["paste_y"],
+            "resize_source": False,
+            "mask": ["17", 0],
+        },
+    }
+    graph["9"] = {
+        "class_type": "SaveImage",
+        "inputs": {"images": ["18", 0], "filename_prefix": "studio"},
+    }
     return graph
 
 
@@ -1275,6 +1318,8 @@ def note_progress(message: dict) -> None:
                 _stage[prompt_id] = "元の絵を取り込んでいます"
             elif node == "15":
                 _stage[prompt_id] = "周りに余白を足しています"
+            elif node in {"16", "17", "18"}:
+                _stage[prompt_id] = "元の絵の位置を合わせています"
             elif node == "7":
                 _stage[prompt_id] = "画像を描いています"
             elif node == "10":
