@@ -234,8 +234,8 @@ MAX_OUTPUT_BYTES = 4 * 1024 * 1024 * 1024
 VARY_COUNT = 3
 VARY_DENOISE = 0.55
 EXPAND_PADS = (128, 256, 384)
-EXPAND_PROMPT_SUFFIX = ", extended background, matching scene, same lighting, no extra people"
-EXPAND_NEGATIVE_SUFFIX = ", extra person, duplicate, cloned character"
+EXPAND_PROMPT_SUFFIX = ", extended background, continuing the same background, same curtains, same wall, matching lighting, no extra objects, no extra people"
+EXPAND_NEGATIVE_SUFFIX = ", extra person, duplicate, cloned character, umbrella, parasol, new object, frame, border"
 
 _comfy_process: subprocess.Popen | None = None
 _jobs: dict[str, dict] = {}
@@ -625,7 +625,11 @@ def expand_layout(width: int, height: int, pad: int) -> dict[str, int]:
         raise ValueError("この絵はすでに大きいので、周りを広げる余白が足りません。もう少し小さい絵で試してください。")
     paste_x = max(0, (out_w - width) // 2)
     paste_y = max(0, (out_h - height) // 2)
-    blend = min(96, paste_x, paste_y, width // 8, height // 8)
+    short_content = min(content_w, content_h)
+    feather = min(160, max(24, pad // 2), max(24, short_content // 4))
+    if feather * 2 >= short_content:
+        feather = max(8, short_content // 2 - 8)
+    blend = min(paste_x, paste_y, max(width, 1) // 5, max(height, 1) // 5)
     return {
         "content_w": content_w,
         "content_h": content_h,
@@ -634,10 +638,10 @@ def expand_layout(width: int, height: int, pad: int) -> dict[str, int]:
         "draw_h": draw_h,
         "out_w": out_w,
         "out_h": out_h,
-        "feather": min(64, max(24, pad // 4), min(content_w, content_h) // 6),
+        "feather": feather,
         "paste_x": paste_x,
         "paste_y": paste_y,
-        "blend": max(16, blend),
+        "blend": max(24, blend),
     }
 
 
@@ -698,6 +702,7 @@ def generation_inputs(body: dict, mode: str) -> dict:
 
     image_path, annotation = output_image_file(body.get("source"))
     width, height = picture_size(image_path, body)
+    source_path = str(image_path)
     if mode == "vary":
         draw_width, draw_height = sampling_size(width, height)
         ensure_memory(width, height, VARY_COUNT)
@@ -740,6 +745,7 @@ def generation_inputs(body: dict, mode: str) -> dict:
         "out_width": layout["out_w"],
         "out_height": layout["out_h"],
         "source": annotation,
+        "source_path": source_path,
         "layout": layout,
     }
 
@@ -876,6 +882,36 @@ def build_vary(spec: dict) -> dict:
     return graph
 
 
+def write_expand_context(source: Path, layout: dict[str, int]) -> str:
+    """灰色の余白ではなく、今の絵のふちの色を伸ばした下絵を作ります。"""
+    import numpy as np
+    from PIL import Image, ImageFilter
+
+    image = Image.open(source).convert("RGB").resize(
+        (layout["content_w"], layout["content_h"]),
+        Image.Resampling.LANCZOS,
+    )
+    pad = layout["pad"]
+    padded = np.pad(np.asarray(image), ((pad, pad), (pad, pad), (0, 0)), mode="edge")
+    soft = np.asarray(
+        Image.fromarray(padded).filter(ImageFilter.GaussianBlur(radius=max(12, pad // 4)))
+    ).astype(np.float32)
+    sharp = padded.astype(np.float32)
+    height, width = sharp.shape[:2]
+    rows, cols = np.ogrid[:height, :width]
+    inside = np.minimum(
+        np.minimum(rows - pad, pad + layout["content_h"] - 1 - rows),
+        np.minimum(cols - pad, pad + layout["content_w"] - 1 - cols),
+    ).astype(np.float32)
+    weight = np.clip(inside / max(layout["feather"], 1), 0, 1)[..., None]
+    mixed = Image.fromarray((sharp * weight + soft * (1 - weight)).astype(np.uint8), "RGB")
+    for old in OUTPUT_DIR.glob("studio_expand_*.png"):
+        old.unlink(missing_ok=True)
+    name = f"studio_expand_{uuid.uuid4().hex[:8]}.png"
+    mixed.save(OUTPUT_DIR / name, compress_level=1)
+    return f"{name} [output]"
+
+
 def build_expand(spec: dict) -> dict:
     layout = spec["layout"]
     graph, model_ref = model_nodes(spec["checkpoint"], spec["loras"])
@@ -898,20 +934,24 @@ def build_expand(spec: dict) -> dict:
             "feathering": layout["feather"],
         },
     }
-    graph["12"] = {
-        "class_type": "VAEEncodeForInpaint",
-        "inputs": {
-            "pixels": ["15", 0],
-            "vae": ["1", 2],
-            "mask": ["15", 1],
-            "grow_mask_by": 6,
-        },
+    # マスクを丸めると境目が直線になるので、ぼかしたマスクのまま描く。
+    graph["24"] = {
+        "class_type": "LoadImageOutput",
+        "inputs": {"image": write_expand_context(Path(spec["source_path"]), layout)},
     }
-    add_sampler(graph, model_ref, spec["seed"], ["12", 0], 1)
+    graph["12"] = {
+        "class_type": "VAEEncode",
+        "inputs": {"pixels": ["24", 0], "vae": ["1", 2]},
+    }
+    graph["19"] = {
+        "class_type": "SetLatentNoiseMask",
+        "inputs": {"samples": ["12", 0], "mask": ["15", 1]},
+    }
+    # 強く描き直すと、余白に別の飾りを足して境目が切れる。弱く整えるだけにする。
+    add_sampler(graph, model_ref, spec["seed"], ["19", 0], 0.45)
     painted = ["8", 0]
     if (layout["draw_w"], layout["draw_h"]) != (layout["out_w"], layout["out_h"]):
         painted = add_scale(graph, painted, layout["out_w"], layout["out_h"], "10")
-    # 縮小して描くと境目がずれるので、保存サイズで元の絵を中央へ戻す。
     graph["16"] = {
         "class_type": "SolidMask",
         "inputs": {"value": 1.0, "width": spec["width"], "height": spec["height"]},
@@ -926,6 +966,18 @@ def build_expand(spec: dict) -> dict:
             "bottom": layout["blend"],
         },
     }
+    graph["21"] = {
+        "class_type": "MaskToImage",
+        "inputs": {"mask": ["17", 0]},
+    }
+    graph["22"] = {
+        "class_type": "ImageBlur",
+        "inputs": {"image": ["21", 0], "blur_radius": 31, "sigma": 10.0},
+    }
+    graph["23"] = {
+        "class_type": "ImageToMask",
+        "inputs": {"image": ["22", 0], "channel": "red"},
+    }
     graph["18"] = {
         "class_type": "ImageCompositeMasked",
         "inputs": {
@@ -934,7 +986,7 @@ def build_expand(spec: dict) -> dict:
             "x": layout["paste_x"],
             "y": layout["paste_y"],
             "resize_source": False,
-            "mask": ["17", 0],
+            "mask": ["23", 0],
         },
     }
     graph["9"] = {
@@ -1318,7 +1370,7 @@ def note_progress(message: dict) -> None:
                 _stage[prompt_id] = "元の絵を取り込んでいます"
             elif node == "15":
                 _stage[prompt_id] = "周りに余白を足しています"
-            elif node in {"16", "17", "18"}:
+            elif node in {"16", "17", "18", "19", "21", "22", "23"}:
                 _stage[prompt_id] = "元の絵の位置を合わせています"
             elif node == "7":
                 _stage[prompt_id] = "画像を描いています"
