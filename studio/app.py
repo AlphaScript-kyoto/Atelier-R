@@ -453,6 +453,249 @@ def read_extra_words() -> list[str]:
     return words
 
 
+def tag_key(tag: str) -> str:
+    return " ".join(tag.lower().split())
+
+
+def split_tags(text: str) -> list[str]:
+    """カンマで分けます。括弧の中のカンマは、一つの言葉として残します。"""
+    tags: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    escaped = False
+    for char in text:
+        if escaped:
+            buf.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            buf.append(char)
+            escaped = True
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        if char == "," and depth == 0:
+            tag = "".join(buf).strip()
+            if tag:
+                tags.append(tag)
+            buf = []
+            continue
+        buf.append(char)
+    tail = "".join(buf).strip()
+    if tail:
+        tags.append(tail)
+    return tags
+
+
+def strip_expand_suffix(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.endswith(EXPAND_PROMPT_SUFFIX):
+        cleaned = cleaned[: -len(EXPAND_PROMPT_SUFFIX)]
+    return cleaned.strip().strip(",")
+
+
+def positive_text(raw: bytes) -> str:
+    try:
+        graph = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(graph, dict):
+        return ""
+    for node in graph.values():
+        if not isinstance(node, dict) or node.get("class_type") != "KSampler":
+            continue
+        ref = (node.get("inputs") or {}).get("positive")
+        if not isinstance(ref, list) or not ref:
+            continue
+        target = graph.get(str(ref[0]))
+        if not isinstance(target, dict):
+            continue
+        text = (target.get("inputs") or {}).get("text")
+        if isinstance(text, str) and text.strip():
+            return strip_expand_suffix(text)
+    return ""
+
+
+def positive_prompt_in_png(path: Path) -> str:
+    try:
+        with path.open("rb") as handle:
+            if handle.read(8) != b"\x89PNG\r\n\x1a\n":
+                return ""
+            while True:
+                header = handle.read(8)
+                if len(header) < 8:
+                    return ""
+                length, kind = struct.unpack(">I4s", header)
+                if length > 20_000_000:
+                    return ""
+                if kind == b"tEXt":
+                    chunk = handle.read(length)
+                    handle.read(4)
+                    if len(chunk) != length:
+                        return ""
+                    key, _, value = chunk.partition(b"\x00")
+                    if key == b"prompt":
+                        return positive_text(value)
+                    continue
+                if kind == b"IEND":
+                    return ""
+                handle.seek(length + 4, os.SEEK_CUR)
+    except OSError:
+        return ""
+    return ""
+
+
+def recent_prompt_tags(limit: int = 36) -> list[list[str]]:
+    if not OUTPUT_DIR.is_dir():
+        return []
+    files = [
+        path
+        for path in OUTPUT_DIR.glob("studio_*.png")
+        if not path.name.startswith("studio_expand_")
+    ]
+    files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    found: list[list[str]] = []
+    for path in files:
+        tags = split_tags(positive_prompt_in_png(path))
+        if not tags:
+            continue
+        found.append(tags)
+        if len(found) >= limit:
+            break
+    return found
+
+
+def fallback_prompt() -> str:
+    base = ["1girl", "solo", "looking at viewer", "soft smile"]
+    words = read_extra_words()
+    if not words:
+        return ", ".join(base + ["simple background"])
+    pick_count = min(len(words), random.randint(4, 7))
+    return ", ".join(base + random.sample(words, pick_count))
+
+
+def remix_tags(lists: list[list[str]]) -> str:
+    """よく出る言葉は残し、場所が近い言葉だけを別の絵から入れ替えます。"""
+    count = len(lists)
+    weights = [1.0 - 0.6 * (index / max(count - 1, 1)) for index in range(count)]
+    appearances: dict[str, int] = {}
+    scores: dict[str, float] = {}
+    spellings: dict[str, str] = {}
+    position_sum: dict[str, float] = {}
+    position_n: dict[str, int] = {}
+    for tags, weight in zip(lists, weights):
+        seen: set[str] = set()
+        for pos, tag in enumerate(tags):
+            key = tag_key(tag)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            appearances[key] = appearances.get(key, 0) + 1
+            scores[key] = scores.get(key, 0.0) + weight
+            position_sum[key] = position_sum.get(key, 0.0) + pos
+            position_n[key] = position_n.get(key, 0) + 1
+            spellings.setdefault(key, tag)
+
+    total = sum(weights)
+    core = {
+        key
+        for key, score in scores.items()
+        if appearances[key] >= 2 and score >= total * 0.42
+    }
+    if len(core) > 14:
+        core = set(sorted(core, key=lambda key: scores[key], reverse=True)[:14])
+
+    def average_pos(key: str) -> float:
+        return position_sum[key] / position_n[key]
+
+    originals = {frozenset(tag_key(tag) for tag in tags) for tags in lists}
+    pool = [key for key in scores if key not in core]
+
+    def pick_neighbor(key: str, used: set[str]) -> str:
+        here = average_pos(key)
+        nearby = [
+            other
+            for other in pool
+            if other not in used and abs(average_pos(other) - here) <= 4
+        ]
+        if not nearby:
+            return ""
+        return random.choices(nearby, weights=[scores[other] for other in nearby], k=1)[0]
+
+    text = ""
+    for _attempt in range(8):
+        donor = random.choices(range(count), weights=weights, k=1)[0]
+        chosen: list[str] = []
+        used: set[str] = set()
+        for tag in lists[donor]:
+            key = tag_key(tag)
+            if not key or key in used:
+                continue
+            if key not in core and random.random() < 0.55:
+                replacement = pick_neighbor(key, used)
+                if replacement:
+                    key = replacement
+                elif random.random() < 0.4:
+                    continue
+            chosen.append(key)
+            used.add(key)
+        for key in sorted(core, key=average_pos):
+            if key not in used:
+                chosen.append(key)
+                used.add(key)
+        if pool and random.random() < 0.65:
+            extras = [key for key in pool if key not in used]
+            if extras:
+                extra = random.choices(extras, weights=[scores[key] for key in extras], k=1)[0]
+                chosen.append(extra)
+        chosen.sort(key=average_pos)
+        while len(chosen) > 4 and len(", ".join(spellings[key] for key in chosen)) > 1800:
+            removable = [key for key in chosen if key not in core]
+            if not removable:
+                break
+            drop = min(removable, key=lambda key: scores[key])
+            chosen.remove(drop)
+        text = ", ".join(spellings[key] for key in chosen)
+        if text and frozenset(chosen) not in originals:
+            return text
+    if text:
+        used_now = {tag_key(tag) for tag in split_tags(text)}
+        extras = [word for word in read_extra_words() if tag_key(word) not in used_now]
+        if extras:
+            return f"{text}, {random.choice(extras)}"
+    return text or fallback_prompt()
+
+
+def matches_hint(tags: list[str], hints: list[str]) -> bool:
+    blob = ", ".join(tag_key(tag) for tag in tags)
+    return any(hint and hint in blob for hint in hints)
+
+
+def build_random_prompt(current: str, hints: list | None = None) -> dict:
+    lists = recent_prompt_tags()
+    clean_hints = []
+    for hint in hints or []:
+        if isinstance(hint, str):
+            key = tag_key(hint)[:200]
+            if key and key not in clean_hints:
+                clean_hints.append(key)
+        if len(clean_hints) >= 8:
+            break
+    if clean_hints:
+        matched = [tags for tags in lists if matches_hint(tags, clean_hints)]
+        if len(matched) >= 4:
+            lists = matched
+    picture_count = len(lists)
+    current_tags = split_tags(strip_expand_suffix(str(current or "")))
+    if current_tags:
+        lists = [current_tags, *lists]
+    if not lists:
+        return {"prompt": fallback_prompt(), "source_count": 0}
+    return {"prompt": remix_tags(lists), "source_count": picture_count}
+
+
 def list_options() -> dict:
     not_ready = {
         "ready": False,
@@ -1255,6 +1498,17 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urllib.parse.urlparse(self.path).path
+        if path == "/api/random-prompt":
+            body = self.read_json_object()
+            if body is None:
+                return
+            current = body.get("prompt") or ""
+            hints = body.get("hints") or []
+            if not isinstance(current, str) or not isinstance(hints, list):
+                self.send_json({"error": "文章を読めませんでした。"}, status=400)
+                return
+            self.send_json(build_random_prompt(current[:4000], hints))
+            return
         if path == "/api/open-folder":
             if self.read_json_object(local_only=True) is None:
                 return

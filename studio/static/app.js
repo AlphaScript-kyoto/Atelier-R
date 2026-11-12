@@ -11,6 +11,7 @@ const form = document.querySelector("#composer");
 const promptBox = document.querySelector("#prompt");
 const negativeBox = document.querySelector("#negative");
 const generateButton = document.querySelector("#generate");
+const randomButton = document.querySelector("#random-prompt");
 const gallery = document.querySelector("#gallery");
 const outputDir = document.querySelector("#output-dir");
 const openFolder = document.querySelector("#open-folder");
@@ -51,6 +52,14 @@ promptBox.addEventListener("input", paintTriggers);
 
 function loraById(id) {
   return loraInfo.find((item) => item.id === id);
+}
+
+function characterHints() {
+  return selectedLoras.flatMap((item) => {
+    const info = loraById(item.id);
+    const first = info && Array.isArray(info.triggers) ? info.triggers[0] : "";
+    return first ? [first] : [];
+  });
 }
 
 function shortLabel(text) {
@@ -430,9 +439,35 @@ const detailPad = document.querySelector("#detail-pad");
 function setGenerating(active) {
   generating = active;
   generateButton.disabled = active;
+  randomButton.disabled = active;
   detailVary.disabled = active;
   detailExpand.disabled = active;
 }
+
+randomButton.addEventListener("click", async () => {
+  if (generating) return;
+  randomButton.disabled = true;
+  try {
+    const response = await fetch("/api/random-prompt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: promptBox.value, hints: characterHints() }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "プロンプトを組めませんでした。");
+    promptBox.value = data.prompt || "";
+    paintTriggers();
+    statusLine.classList.remove("error");
+    statusLine.textContent = data.source_count
+      ? `最近の ${data.source_count} 枚から、言葉を組み替えました。直してから生成しても大丈夫です。`
+      : "まだ絵が少ないので、追加ワードから言葉を選びました。";
+  } catch (error) {
+    statusLine.classList.add("error");
+    statusLine.textContent = error.message;
+  } finally {
+    randomButton.disabled = generating;
+  }
+});
 
 async function startJob(payload, settings) {
   if (generating) return;

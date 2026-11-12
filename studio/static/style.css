@@ -274,7 +274,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .prompt-block,
 #extra-words,
 #negative-block,
-#generate,
+.actions,
 .progress-wrap {
   grid-column: 2;
 }
@@ -283,7 +283,13 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 #extra-words { margin: 12px clamp(20px, 4vw, 56px) 0; }
 #extra-word-list { margin-top: 10px; }
 #negative-block { margin: 12px clamp(20px, 4vw, 56px) 16px; }
-#generate { margin-left: clamp(20px, 4vw, 56px); }
+.actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-left: clamp(20px, 4vw, 56px);
+  max-width: calc(860px + clamp(20px, 4vw, 56px));
+}
 .progress-wrap { margin: 14px clamp(20px, 4vw, 56px) 0; }
 
 main {
@@ -303,17 +309,28 @@ main {
 
 details { color: var(--muted); }
 
+#random-prompt,
 #generate {
-  width: min(100%, 280px);
   border: 0;
   border-radius: 999px;
-  background: var(--accent);
-  color: white;
   padding: 14px 22px;
   font-weight: 700;
   cursor: pointer;
 }
 
+#random-prompt {
+  border: 1px solid var(--line);
+  background: #1c2030;
+  color: var(--text);
+}
+
+#generate {
+  width: min(100%, 280px);
+  background: var(--accent);
+  color: white;
+}
+
+#random-prompt:disabled,
 #generate:disabled {
   cursor: wait;
   opacity: 0.6;
@@ -571,6 +588,8 @@ figcaption {
   .side, .sheet-head, #negative-block, #extra-words, .prompt-block label { display: none; }
   .prompt-block { flex: 1; min-width: 0; padding: 0; }
   #prompt { height: 44px; min-height: 44px; }
+  .actions { gap: 8px; margin: 0; max-width: none; }
+  #random-prompt,
   #generate {
     width: 44px;
     height: 44px;
@@ -580,6 +599,7 @@ figcaption {
     flex: none;
     font-size: 0;
   }
+  #random-prompt::before { content: "乱"; font-size: 15px; }
   #generate::before { content: "↑"; font-size: 20px; }
   .progress-wrap {
     position: fixed;
@@ -642,15 +662,19 @@ figcaption {
   body.sheet-open #extra-words { margin: 12px 0 0; }
   body.sheet-open #negative-block { margin: 12px 0; }
   body.sheet-open #prompt { height: auto; min-height: 96px; }
+  body.sheet-open .actions { width: 100%; margin-top: 8px; }
+  body.sheet-open #random-prompt,
   body.sheet-open #generate {
     flex: none;
-    width: 100%;
+    width: auto;
     height: auto;
-    margin-top: 8px;
+    margin: 0;
     padding: 14px 22px;
     border-radius: 999px;
     font-size: 16px;
   }
+  body.sheet-open #generate { flex: 1; }
+  body.sheet-open #random-prompt::before,
   body.sheet-open #generate::before { content: none; }
   body.sheet-open .progress-wrap { position: static; order: 5; }
   .gallery { margin-top: 12px; }
