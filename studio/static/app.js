@@ -161,7 +161,10 @@ function modelTile(item, pressed, onPick) {
   thumb.type = "button";
   thumb.className = "tile-thumb";
   thumb.textContent = "サムネ";
-  thumb.addEventListener("click", () => openCardEditor(item));
+  thumb.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openCardEditor(item);
+  });
   actions.appendChild(thumb);
   tile.appendChild(actions);
   return tile;

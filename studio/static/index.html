@@ -137,13 +137,14 @@
       <div id="picker-grid" class="model-grid"></div>
     </div>
   </dialog>
+  <dialog id="card-editor">
     <form id="card-form" method="dialog">
       <h2 id="card-heading">サムネイル</h2>
       <label for="card-file">画像（PNG、JPEG、WebP）</label>
       <input id="card-file" type="file" accept="image/png,image/jpeg,image/webp">
       <label for="card-url">ダウンロード元のURL</label>
-      <input id="card-url" type="url" placeholder="https://..." inputmode="url" autocomplete="off">
-      <p class="hint">画像はカードの絵になります。URLを入れると、カードの詳細ボタンでそのページを開きます。</p>
+      <input id="card-url" type="url" placeholder="https://civitai.com/..." inputmode="url" autocomplete="off">
+      <p class="hint">画像を選ぶと、カードの絵になります。ダウンロード元のURLには、Civitaiなどそのモデルのページのアドレスを貼ってください。保存すると、カードに詳細が出ます。</p>
       <p id="card-error" class="hint" hidden></p>
       <div class="card-actions">
         <button id="card-cancel" type="button">閉じる</button>

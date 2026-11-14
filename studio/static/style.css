@@ -155,10 +155,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   position: absolute;
   top: 8px;
   right: 8px;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   gap: 4px;
   opacity: 0;
+  pointer-events: auto;
 }
 
 .model-tile:hover .tile-actions,
@@ -279,10 +280,12 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .picker-panel {
   position: relative;
   z-index: 1;
-  width: min(920px, calc(100vw - 48px));
-  max-height: min(82vh, 860px);
-  overflow: auto;
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  width: calc(100vw - 48px);
+  height: calc(100vh - 48px);
+  overflow: hidden;
+  padding: 16px 20px 20px;
   border: 1px solid var(--line);
   border-radius: 18px;
   background: #171a22;
@@ -298,7 +301,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .picker-head h2 { margin: 0; font-size: 18px; }
 
 #picker-grid {
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  align-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
 }
 
 .lora-card {
@@ -906,6 +913,13 @@ figcaption {
     background: #000;
   }
   dialog[open] { padding: 0; }
+  .picker-panel {
+    width: 100%;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+  #picker-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
   .detail-stage { height: 100dvh; }
   #detail-image {
     width: auto;
