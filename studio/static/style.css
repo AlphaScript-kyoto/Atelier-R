@@ -505,7 +505,19 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   margin-left: clamp(20px, 4vw, 56px);
   max-width: calc(860px + clamp(20px, 4vw, 56px));
 }
-.progress-wrap { margin: 14px clamp(20px, 4vw, 56px) 0; }
+.progress-wrap {
+  grid-row: 5;
+  align-self: end;
+  z-index: 2;
+  max-height: min(32vh, 280px);
+  overflow: auto;
+  margin: 0 clamp(20px, 4vw, 56px) 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #171a22;
+}
+body.queue-open main { padding-bottom: min(36vh, 320px); }
 
 main {
   grid-column: 2;
@@ -558,21 +570,28 @@ details { color: var(--muted); }
   border-radius: 999px;
   background: #2a3142;
 }
-#progress-bar {
+.queue-bar {
   width: 0%;
   height: 100%;
   background: linear-gradient(90deg, #7d6bff, #d7a6ff);
   transition: width 0.2s linear;
 }
-#progress-bar.indeterminate {
+.queue-bar.indeterminate {
   width: 40%;
   animation: slide 1.1s ease-in-out infinite;
 }
+.queue-row + .queue-row { margin-top: 12px; }
+.queue-label {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.queue-row.is-error .queue-label { color: #ffb4b4; }
 @keyframes slide {
   0% { transform: translateX(-120%); }
   100% { transform: translateX(280%); }
 }
-#progress-label { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
 
 .save-note {
   max-width: 860px;
@@ -822,7 +841,12 @@ figcaption {
     left: 12px;
     right: 12px;
     bottom: calc(72px + env(safe-area-inset-bottom));
+    max-height: 28vh;
+    overflow: auto;
     margin: 0;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(18, 21, 28, 0.94);
   }
   #sheet-scrim {
     position: fixed;

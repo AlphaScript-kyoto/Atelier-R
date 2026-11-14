@@ -238,6 +238,7 @@ BYTES_PER_PIXEL = 12
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024 * 1024
 VARY_COUNT = 3
 VARY_DENOISE = 0.55
+QUEUE_LIMIT = 10
 EXPAND_PADS = (128, 256, 384)
 EXPAND_PROMPT_SUFFIX = ", extended background, continuing the same background, same curtains, same wall, matching lighting, no extra objects, no extra people"
 EXPAND_NEGATIVE_SUFFIX = ", extra person, duplicate, cloned character, umbrella, parasol, new object, frame, border"
@@ -1431,10 +1432,83 @@ def sampling_size(width: int, height: int) -> tuple[int, int]:
     return draw_width, draw_height
 
 
-def forget_progress(prompt_id: str) -> None:
+def finish_job(prompt_id: str) -> None:
     with _jobs_lock:
+        job = _jobs.get(prompt_id)
+        if job is not None:
+            job["finished"] = True
         _progress_state.pop(prompt_id, None)
         _stage.pop(prompt_id, None)
+
+
+def reconcile_studio_jobs() -> None:
+    """画面を閉じたあとも、描き終わった分の待ち枠を戻す。"""
+    with _jobs_lock:
+        pending_ids = [
+            prompt_id
+            for prompt_id, job in _jobs.items()
+            if job.get("source") == "studio" and not job.get("finished") and not job.get("pending")
+        ]
+    if not pending_ids:
+        return
+    try:
+        queue = comfy_json("GET", "/queue", timeout=5)
+    except RuntimeError:
+        return
+    live: set[str] = set()
+    for bucket in ("queue_running", "queue_pending"):
+        for item in queue.get(bucket) or []:
+            if isinstance(item, (list, tuple)) and len(item) > 1:
+                live.add(str(item[1]))
+    for prompt_id in pending_ids:
+        if prompt_id in live:
+            continue
+        try:
+            history = comfy_json("GET", "/history/" + urllib.parse.quote(prompt_id), timeout=5)
+        except RuntimeError:
+            continue
+        if history.get(prompt_id):
+            finish_job(prompt_id)
+
+
+def reserve_studio_job() -> str:
+    reconcile_studio_jobs()
+    token = f"pending-{uuid.uuid4().hex}"
+    with _jobs_lock:
+        waiting = sum(
+            1
+            for job in _jobs.values()
+            if job.get("source") == "studio" and not job.get("finished")
+        )
+        if waiting >= QUEUE_LIMIT:
+            raise ValueError("待ちは 10 件までです。描き終わるまで、追加は待ってください。")
+        _jobs[token] = {
+            "seed": 0,
+            "created": time.time(),
+            "source": "studio",
+            "finished": False,
+            "pending": True,
+        }
+    return token
+
+
+def cancel_studio_job(token: str) -> None:
+    with _jobs_lock:
+        _jobs.pop(token, None)
+
+
+def trim_jobs() -> None:
+    if len(_jobs) <= 40:
+        return
+    finished = sorted(
+        ((key, job) for key, job in _jobs.items() if job.get("finished")),
+        key=lambda item: item[1]["created"],
+    )
+    overflow = len(_jobs) - 40
+    for key, _job in finished[:overflow]:
+        _jobs.pop(key, None)
+        _progress_state.pop(key, None)
+        _stage.pop(key, None)
 
 
 def running_status(prompt_id: str, known: dict) -> dict:
@@ -1452,15 +1526,17 @@ def running_status(prompt_id: str, known: dict) -> dict:
     }
 
 
-def remember_job(prompt_id: str, seed: int) -> None:
+def remember_job(prompt_id: str, seed: int, source: str, token: str | None = None) -> None:
     with _jobs_lock:
-        _jobs[prompt_id] = {"seed": seed, "created": time.time()}
-        if len(_jobs) > 40:
-            oldest = sorted(_jobs.items(), key=lambda item: item[1]["created"])[:-40]
-            for key, _ in oldest:
-                _jobs.pop(key, None)
-                _progress_state.pop(key, None)
-                _stage.pop(key, None)
+        if token:
+            _jobs.pop(token, None)
+        _jobs[prompt_id] = {
+            "seed": seed,
+            "created": time.time(),
+            "source": source,
+            "finished": False,
+        }
+        trim_jobs()
 
 
 def job_status(prompt_id: str) -> dict:
@@ -1481,7 +1557,7 @@ def job_status(prompt_id: str) -> dict:
         for entry in status.get("messages") or []:
             if isinstance(entry, list) and len(entry) > 1 and isinstance(entry[1], dict):
                 message = str(entry[1].get("exception_message") or message)
-        forget_progress(prompt_id)
+        finish_job(prompt_id)
         return {"state": "error", "message": message, "seed": known["seed"]}
     images = []
     for node in (item.get("outputs") or {}).values():
@@ -1505,7 +1581,7 @@ def job_status(prompt_id: str) -> dict:
             })
     if not images and not status.get("completed"):
         return running_status(prompt_id, known)
-    forget_progress(prompt_id)
+    finish_job(prompt_id)
     folders = {image["subfolder"] for image in images}
     saved_dir = OUTPUT_DIR / folders.pop() if len(folders) == 1 else OUTPUT_DIR
     return {"state": "done", "seed": known["seed"], "images": images, "output_dir": str(saved_dir)}
@@ -1730,22 +1806,35 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.begin_generation(body, for_muse=False)
 
     def begin_generation(self, body: dict, *, for_muse: bool) -> None:
+        token = None
+        if not for_muse:
+            try:
+                token = reserve_studio_job()
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+                return
         try:
             prefix = "muse/studio" if for_muse else "studio"
             graph, seed, size = build_graph(body, prefix)
             result = comfy_json("POST", "/prompt", {"prompt": graph, "client_id": CLIENT_ID})
         except ValueError as error:
+            if token:
+                cancel_studio_job(token)
             print(f"生成を始められませんでした: {error}", flush=True)
             self.send_json({"error": str(error)}, status=400)
             return
         except RuntimeError as error:
+            if token:
+                cancel_studio_job(token)
             self.send_json({"error": "生成を開始できませんでした。" + str(error)[:300]}, status=502)
             return
         prompt_id = result.get("prompt_id")
         if not prompt_id or result.get("node_errors"):
+            if token:
+                cancel_studio_job(token)
             self.send_json({"error": "ワークフローを開始できませんでした。"}, status=502)
             return
-        remember_job(prompt_id, seed)
+        remember_job(prompt_id, seed, "muse" if for_muse else "studio", token)
         payload = {"prompt_id": prompt_id, "seed": seed, "width": size[0], "height": size[1]}
         if for_muse:
             payload["status_url"] = f"/api/agent/jobs/{prompt_id}"

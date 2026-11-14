@@ -15,8 +15,6 @@ const gallery = document.querySelector("#gallery");
 const outputDir = document.querySelector("#output-dir");
 const openFolder = document.querySelector("#open-folder");
 const progressWrap = document.querySelector("#progress-wrap");
-const progressBar = document.querySelector("#progress-bar");
-const progressLabel = document.querySelector("#progress-label");
 const detail = document.querySelector("#detail");
 const detailImage = document.querySelector("#detail-image");
 const detailFacts = document.querySelector("#detail-facts");
@@ -582,34 +580,69 @@ function currentSettings(seed) {
   };
 }
 
-function showProgress(job) {
-  progressWrap.hidden = false;
-  if (job.max > 0) {
-    progressBar.classList.remove("indeterminate");
-    progressBar.style.width = `${Math.round((job.value / job.max) * 100)}%`;
-    progressLabel.textContent = `${job.stage}（${job.value} / ${job.max} ステップ）`;
-  } else {
-    progressBar.classList.add("indeterminate");
-    progressBar.style.width = "";
-    progressLabel.textContent = job.stage || "準備しています";
-  }
-}
-
-let generating = false;
+const MAX_QUEUE = 10;
+const queue = [];
+let polling = false;
 const detailVary = document.querySelector("#detail-vary");
 const detailExpand = document.querySelector("#detail-expand");
 const detailPad = document.querySelector("#detail-pad");
 
-function setGenerating(active) {
-  generating = active;
-  generateButton.disabled = active;
-  randomButton.disabled = active;
-  detailVary.disabled = active;
-  detailExpand.disabled = active;
+function unfinishedJobs() {
+  return queue.filter((job) => job.state === "queued" || job.state === "running");
+}
+
+function shortPrompt(text) {
+  const flat = String(text || "").replace(/\s+/g, " ").trim();
+  if (!flat) return "（文章なし）";
+  return flat.length > 42 ? `${flat.slice(0, 42)}…` : flat;
+}
+
+function renderQueue() {
+  const visible = queue.filter((job) => job.state !== "done");
+  const waiting = unfinishedJobs();
+  progressWrap.hidden = visible.length === 0;
+  document.body.classList.toggle("queue-open", visible.length > 0);
+  progressWrap.replaceChildren();
+  for (const job of visible) {
+    const row = document.createElement("div");
+    row.className = "queue-row";
+    const label = document.createElement("p");
+    label.className = "queue-label";
+    const title = shortPrompt(job.settings.prompt);
+    if (job.state === "error") {
+      row.classList.add("is-error");
+      label.textContent = `${title} — ${job.error}`;
+      row.appendChild(label);
+    } else {
+      const place = waiting.indexOf(job);
+      if (place === 0) {
+        label.textContent = job.max > 0
+          ? `${title} — ${job.stage}（${job.value} / ${job.max} ステップ）`
+          : `${title} — ${job.stage || "準備しています"}`;
+      } else {
+        label.textContent = `${title} — 待ち ${place + 1}`;
+      }
+      const track = document.createElement("div");
+      track.className = "progress-track";
+      const bar = document.createElement("div");
+      bar.className = "queue-bar";
+      if (place === 0 && job.max > 0) {
+        bar.style.width = `${Math.round((job.value / job.max) * 100)}%`;
+      } else {
+        bar.classList.add("indeterminate");
+      }
+      track.appendChild(bar);
+      row.append(label, track);
+    }
+    progressWrap.appendChild(row);
+  }
+  const full = waiting.length >= MAX_QUEUE;
+  generateButton.disabled = full;
+  detailVary.disabled = full;
+  detailExpand.disabled = full;
 }
 
 randomButton.addEventListener("click", async () => {
-  if (generating) return;
   randomButton.disabled = true;
   try {
     const response = await fetch("/api/random-prompt", {
@@ -629,23 +662,44 @@ randomButton.addEventListener("click", async () => {
     statusLine.classList.add("error");
     statusLine.textContent = error.message;
   } finally {
-    randomButton.disabled = generating;
+    randomButton.disabled = false;
   }
 });
 
-async function startJob(payload, settings) {
-  if (generating) return;
-  setGenerating(true);
-  statusLine.classList.remove("error");
-  progressWrap.hidden = false;
-  progressBar.classList.add("indeterminate");
-  progressBar.style.width = "";
-  progressLabel.textContent = "準備しています";
-  const waiting = {
-    vary: "似た絵を3枚作っています。元の絵を取り込んでから、ステップが進みます。",
-    expand: "周りの背景を描き足しています。元の絵を取り込んでから、ステップが進みます。",
+function startJob(payload, settings) {
+  if (unfinishedJobs().length >= MAX_QUEUE) {
+    statusLine.classList.add("error");
+    statusLine.textContent = "待ちは 10 件までです。描き終わるまで、追加は待ってください。";
+    renderQueue();
+    return;
+  }
+  const entry = {
+    settings,
+    promptId: "",
+    state: "queued",
+    stage: "準備しています",
+    value: 0,
+    max: 0,
+    error: "",
+    lastMark: "",
+    lastChange: Date.now(),
   };
-  statusLine.textContent = waiting[payload.mode] || "生成しています。モデルの読み込み中はバーが動き、描き始めるとステップが進みます。";
+  queue.push(entry);
+  statusLine.classList.remove("error");
+  const waitingNote = {
+    vary: "似た絵を待ちに入れました。",
+    expand: "背景を広げる絵を待ちに入れました。",
+  };
+  const ahead = unfinishedJobs().length;
+  statusLine.textContent = ahead === 1
+    ? `${waitingNote[payload.mode] || "待ちに入れました。"} モデルの読み込み中はバーが動き、描き始めるとステップが進みます。`
+    : `${waitingNote[payload.mode] || "待ちに入れました。"} いま ${ahead} 件並んでいます。絵は 1 件ずつ描きます。`;
+  renderQueue();
+  if (payload.mode !== "create") setSheet(false);
+  sendJob(entry, payload);
+}
+
+async function sendJob(entry, payload) {
   try {
     const response = await fetch("/api/generate", {
       method: "POST",
@@ -654,23 +708,23 @@ async function startJob(payload, settings) {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "生成を開始できませんでした。");
-    settings.seed = data.seed;
+    entry.promptId = data.prompt_id;
+    entry.settings.seed = data.seed;
     if (data.width && data.height) {
-      settings.width = data.width;
-      settings.height = data.height;
+      entry.settings.width = data.width;
+      entry.settings.height = data.height;
     }
     if (payload.mode === "expand") {
-      settings.ratio = "custom";
-      settings.ratioLabel = `${settings.width}×${settings.height}`;
+      entry.settings.ratio = "custom";
+      entry.settings.ratioLabel = `${entry.settings.width}×${entry.settings.height}`;
     }
-    await waitForJob(data.prompt_id, settings);
-    setSheet(false);
+    ensurePoller();
   } catch (error) {
+    entry.state = "error";
+    entry.error = error.message;
     statusLine.classList.add("error");
     statusLine.textContent = error.message;
-  } finally {
-    progressWrap.hidden = true;
-    setGenerating(false);
+    renderQueue();
   }
 }
 
@@ -694,40 +748,66 @@ form.addEventListener("submit", async (event) => {
   }, settings);
 });
 
-async function waitForJob(promptId, settings) {
-  let lastMark = "";
-  let lastChange = Date.now();
+function ensurePoller() {
+  if (polling) return;
+  polling = true;
+  pollQueue();
+}
+
+async function pollQueue() {
   const stallLimit = 10 * 60 * 1000;
-  while (true) {
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    let job;
-    try {
-      const response = await fetch(`/api/jobs/${promptId}`);
-      job = await response.json();
-    } catch (error) {
-      if (Date.now() - lastChange > stallLimit) {
-        throw new Error("進み具合が止まったままです。黒い画面にエラーが出ていないか見てください。");
+  try {
+    while (unfinishedJobs().some((job) => job.promptId)) {
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      for (const entry of unfinishedJobs()) {
+        if (!entry.promptId || entry.state === "error") continue;
+        let job;
+        try {
+          const response = await fetch(`/api/jobs/${entry.promptId}`);
+          job = await response.json();
+        } catch (error) {
+          if (Date.now() - entry.lastChange > stallLimit) {
+            entry.state = "error";
+            entry.error = "進み具合が止まったままです。黒い画面にエラーが出ていないか見てください。";
+          }
+          continue;
+        }
+        const mark = `${job.state}:${job.stage || ""}:${job.value || 0}:${job.max || 0}`;
+        if (mark !== entry.lastMark) {
+          entry.lastMark = mark;
+          entry.lastChange = Date.now();
+        } else if (Date.now() - entry.lastChange > stallLimit) {
+          entry.state = "error";
+          entry.error = "進み具合が止まったままです。黒い画面にエラーが出ていないか見てください。";
+          continue;
+        }
+        if (job.state === "running") {
+          entry.state = "running";
+          entry.stage = job.stage || "準備しています";
+          entry.value = job.value || 0;
+          entry.max = job.max || 0;
+          continue;
+        }
+        if (job.state === "error" || job.state === "missing") {
+          entry.state = "error";
+          entry.error = job.message || "生成に失敗しました。";
+          continue;
+        }
+        entry.state = "done";
+        entry.settings.seed = job.seed;
+        addSession(job.images || [], entry.settings);
+        const left = unfinishedJobs().length;
+        statusLine.classList.remove("error");
+        statusLine.textContent = left
+          ? `できました。シードは ${job.seed} です。残り ${left} 件が待っています。`
+          : `できました。シードは ${job.seed} です。`;
       }
-      continue;
+      renderQueue();
     }
-    const mark = `${job.state}:${job.stage || ""}:${job.value || 0}:${job.max || 0}`;
-    if (mark !== lastMark) {
-      lastMark = mark;
-      lastChange = Date.now();
-    } else if (Date.now() - lastChange > stallLimit) {
-      throw new Error("進み具合が止まったままです。黒い画面にエラーが出ていないか見てください。");
-    }
-    if (job.state === "running") {
-      showProgress(job);
-      continue;
-    }
-    if (job.state === "error" || job.state === "missing") {
-      throw new Error(job.message || "生成に失敗しました。");
-    }
-    statusLine.classList.remove("error");
-    statusLine.textContent = `できました。シードは ${job.seed} です。`;
-    addSession(job.images, { ...settings, seed: job.seed });
-    return;
+  } finally {
+    polling = false;
+    renderQueue();
+    if (unfinishedJobs().some((job) => job.promptId)) ensurePoller();
   }
 }
 
@@ -951,7 +1031,11 @@ document.querySelector("#detail-rerun").addEventListener("click", () => {
 });
 
 function runFromDetail(mode) {
-  if (generating) return;
+  if (unfinishedJobs().length >= MAX_QUEUE) {
+    statusLine.classList.add("error");
+    statusLine.textContent = "待ちは 10 件までです。描き終わるまで、追加は待ってください。";
+    return;
+  }
   const settings = JSON.parse(detail.dataset.settings || "{}");
   const source = JSON.parse(detail.dataset.source || "{}");
   if (!source.filename) {
