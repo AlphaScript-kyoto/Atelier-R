@@ -8,7 +8,7 @@
 
 - 左でモデル、LoRA、向き、解像度、枚数を選びます。
 - 中央に描きたい内容を書いて生成します。
-- できた絵は `ComfyUI/output/` に自動で保存されます。別のフォルダへコピーはしません。
+- 画面で作った絵は `ComfyUI/output/` に自動で保存されます。Muse が作った絵は `ComfyUI/output/muse/` に分かれます。別の場所へコピーはしません。
 - チェックポイントは 1 つ約 6.6GB あるため、コピーせず、今あるファイルをそのまま読みます。
 
 画面が最初から使っている描き方は次のとおりです。サイズと枚数、シードは画面で変えられます。サンプラー以降は画面では固定です。
@@ -84,6 +84,8 @@ Authorization: Bearer 合言葉
 生成に送る JSON は、画面が内部で送っているものと同じです。`checkpoint`、`prompt`、`width`、`height`、`count` が基本です。LoRA を使うときは `loras` に `{"id","strength"}` を並べます。1 つだけなら、今までの `lora` と `strength` でも受け付けます。
 
 `mode` を省くと、これまでどおり白紙から描きます。できた絵から続けるときは、`source` に `{"filename","subfolder"}` を入れます。`mode` が `vary` のときは似た絵を3枚、`expand` のときは `pad` に `128`、`256`、`384` のどれかを入れて、外側の背景を描き足します。
+
+Muse が作った絵は `ComfyUI/output/muse/` に保存されます。ファイル名は、画面と同じく `studio_` で始まります。画面の **生成する** で作った絵は、今までどおり `ComfyUI/output/` の直下です。進み具合の `output_dir` も、Muse のときは `muse` フォルダを指します。
 
 この PC の中から試すときは、Atelier R を開いたあと、プロジェクトのフォルダで次を実行します。合言葉はファイルから読むので、コマンドに直接書きません。
 
@@ -224,7 +226,8 @@ Unregister-ScheduledTask -TaskName "Atelier R" -Confirm:$false
 | `ComfyUI/` | ComfyUI 本体と、Python 3.13 の仮想環境（`.venv`）です。 |
 | `ComfyUI/extra_model_paths.yaml` | モデルの置き場所を ComfyUI に教える設定です。 |
 | `ComfyUI/constraints-rocm.txt` | ライブラリを入れ直しても、PyTorch が GPU 非対応の通常版に戻らないようにする指定です。 |
-| `ComfyUI/output/` | 生成した画像の保存先です。起動後に作られます。 |
+| `ComfyUI/output/` | 画面で生成した画像の保存先です。起動後に作られます。 |
+| `ComfyUI/output/muse/` | Muse が生成した画像の保存先です。最初の生成で作られます。 |
 | `workflows/sdxl_olivia.json` | ノード画面用のワークフローです。Atelier R の画面では使いません。 |
 | `Lora/chekpoint/` | チェックポイント 3 つです。フォルダ名はもともとこの綴りです。 |
 | `Lora/【オリヴィア】....safetensors` | オリヴィア LoRA の実体です。 |

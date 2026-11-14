@@ -1208,16 +1208,22 @@ def add_scale(graph: dict[str, dict], image_ref: list, width: int, height: int, 
     return [node_id, 0]
 
 
-def add_save(graph: dict[str, dict], image_ref: list, current: tuple[int, int], target: tuple[int, int]) -> None:
+def add_save(
+    graph: dict[str, dict],
+    image_ref: list,
+    current: tuple[int, int],
+    target: tuple[int, int],
+    prefix: str,
+) -> None:
     if current != target:
         image_ref = add_scale(graph, image_ref, target[0], target[1], "10")
     graph["9"] = {
         "class_type": "SaveImage",
-        "inputs": {"images": image_ref, "filename_prefix": "studio"},
+        "inputs": {"images": image_ref, "filename_prefix": prefix},
     }
 
 
-def build_create(spec: dict) -> dict:
+def build_create(spec: dict, prefix: str) -> dict:
     graph, model_ref = model_nodes(spec["checkpoint"], spec["loras"])
     add_prompts(graph, spec["prompt"], spec["negative"])
     graph["6"] = {
@@ -1234,11 +1240,12 @@ def build_create(spec: dict) -> dict:
         ["8", 0],
         (spec["draw_width"], spec["draw_height"]),
         (spec["out_width"], spec["out_height"]),
+        prefix,
     )
     return graph
 
 
-def build_vary(spec: dict) -> dict:
+def build_vary(spec: dict, prefix: str) -> dict:
     graph, model_ref = model_nodes(spec["checkpoint"], spec["loras"])
     add_prompts(graph, spec["prompt"], spec["negative"])
     graph["11"] = {
@@ -1262,6 +1269,7 @@ def build_vary(spec: dict) -> dict:
         ["8", 0],
         (spec["draw_width"], spec["draw_height"]),
         (spec["out_width"], spec["out_height"]),
+        prefix,
     )
     return graph
 
@@ -1296,7 +1304,7 @@ def write_expand_context(source: Path, layout: dict[str, int]) -> str:
     return f"{name} [output]"
 
 
-def build_expand(spec: dict) -> dict:
+def build_expand(spec: dict, prefix: str) -> dict:
     layout = spec["layout"]
     graph, model_ref = model_nodes(spec["checkpoint"], spec["loras"])
     add_prompts(graph, spec["prompt"], spec["negative"])
@@ -1375,22 +1383,22 @@ def build_expand(spec: dict) -> dict:
     }
     graph["9"] = {
         "class_type": "SaveImage",
-        "inputs": {"images": ["18", 0], "filename_prefix": "studio"},
+        "inputs": {"images": ["18", 0], "filename_prefix": prefix},
     }
     return graph
 
 
-def build_graph(body: dict) -> tuple[dict, int, tuple[int, int]]:
+def build_graph(body: dict, prefix: str = "studio") -> tuple[dict, int, tuple[int, int]]:
     mode = str(body.get("mode") or "create")
     if mode not in {"create", "vary", "expand"}:
         raise ValueError("操作を確認してください。")
     spec = generation_inputs(body, mode)
     if mode == "vary":
-        graph = build_vary(spec)
+        graph = build_vary(spec, prefix)
     elif mode == "expand":
-        graph = build_expand(spec)
+        graph = build_expand(spec, prefix)
     else:
-        graph = build_create(spec)
+        graph = build_create(spec, prefix)
     return graph, spec["seed"], (spec["out_width"], spec["out_height"])
 
 
@@ -1498,7 +1506,9 @@ def job_status(prompt_id: str) -> dict:
     if not images and not status.get("completed"):
         return running_status(prompt_id, known)
     forget_progress(prompt_id)
-    return {"state": "done", "seed": known["seed"], "images": images, "output_dir": str(OUTPUT_DIR)}
+    folders = {image["subfolder"] for image in images}
+    saved_dir = OUTPUT_DIR / folders.pop() if len(folders) == 1 else OUTPUT_DIR
+    return {"state": "done", "seed": known["seed"], "images": images, "output_dir": str(saved_dir)}
 
 
 class StudioHandler(BaseHTTPRequestHandler):
@@ -1721,7 +1731,8 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def begin_generation(self, body: dict, *, for_muse: bool) -> None:
         try:
-            graph, seed, size = build_graph(body)
+            prefix = "muse/studio" if for_muse else "studio"
+            graph, seed, size = build_graph(body, prefix)
             result = comfy_json("POST", "/prompt", {"prompt": graph, "client_id": CLIENT_ID})
         except ValueError as error:
             print(f"生成を始められませんでした: {error}", flush=True)
