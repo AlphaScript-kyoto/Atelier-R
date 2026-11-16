@@ -217,6 +217,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   gap: 8px;
 }
 .section-head .label { margin-bottom: 0; }
+.section-actions { display: flex; gap: 4px; align-items: center; }
 
 .current-model {
   position: relative;
@@ -254,6 +255,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 .switch-model,
 #lora-add,
+#train-open,
+#train-close,
 #picker-close {
   border: 0;
   background: transparent;
@@ -268,7 +271,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   right: 8px;
 }
 
-#picker-scrim {
+#picker-scrim,
+#train-scrim {
   position: fixed;
   inset: 0;
   z-index: 0;
@@ -1196,4 +1200,84 @@ figcaption {
     background: #1b1f2a;
   }
   dialog#detail #detail-close { display: none; }
+}
+
+.train-panel { height: min(920px, calc(100vh - 48px)); }
+.train-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+.train-goal { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.train-body input[type="text"],
+.train-body input[type="number"],
+#train-name,
+#train-trigger,
+#train-repeats {
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--text);
+}
+.train-settings { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px; }
+.train-settings[hidden],
+#train-start[hidden],
+#train-stop[hidden],
+#train-flux-note[hidden] { display: none; }
+.train-settings label { font-size: 12px; }
+.file-button {
+  border: 0;
+  background: transparent;
+  color: #c4b8ff;
+  font-weight: 700;
+  cursor: pointer;
+}
+.train-grid { display: grid; gap: 10px; margin-top: 10px; }
+.train-card {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #12151c;
+}
+.train-card img { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; background: #0c0e13; }
+.train-card textarea { min-height: 72px; padding: 8px; font-size: 12px; }
+.train-card-tools { display: flex; justify-content: flex-end; }
+.train-card-tools button, .train-actions button {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.train-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+#train-start { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.check-line { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; font-weight: 600; }
+.check-line input { width: auto; margin: 0; }
+#train-status.is-error { color: #ffb4b4; }
+@media (max-width: 800px) {
+  dialog#train[open] {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    padding: 0;
+    place-items: stretch;
+    overflow: hidden;
+  }
+  #train .train-panel {
+    width: 100%;
+    height: 100%;
+    max-height: 100dvh;
+    padding: calc(12px + env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom));
+  }
+  .train-settings { grid-template-columns: 1fr; }
 }

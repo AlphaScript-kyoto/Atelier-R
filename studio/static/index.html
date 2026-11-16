@@ -36,9 +36,12 @@
     </section>
 
     <section>
-      <div class="section-head">
+        <div class="section-head">
         <span class="label">LoRA</span>
-        <button id="lora-add" type="button">追加する</button>
+        <span class="section-actions">
+          <button id="train-open" type="button">学習</button>
+          <button id="lora-add" type="button">追加する</button>
+        </span>
       </div>
       <div id="lora-stack"></div>
       <p class="hint">追加するを押すと、ベースモデルごとに分かれたサムネイルの一覧が出ます。今の基礎モデルに合わない LoRA は選べません。同時に 5 つまでです。カーソルを合わせると、画像を入れるボタンと、URLがあるときは詳細が出ます。</p>
@@ -155,6 +158,63 @@
         <button id="card-save" type="submit">保存する</button>
       </div>
     </form>
+  </dialog>
+  <dialog id="train">
+    <button id="train-scrim" type="button" aria-label="閉じる"></button>
+    <div class="picker-panel train-panel">
+      <div class="picker-head">
+        <h2>LoRA を学習</h2>
+        <button id="train-close" type="button">閉じる</button>
+      </div>
+      <div class="train-body">
+        <div class="train-goal" role="group" aria-label="学び方">
+          <button id="goal-style" type="button" class="choice" data-goal="style" aria-pressed="true">画風</button>
+          <button id="goal-character" type="button" class="choice" data-goal="character" aria-pressed="false">キャラクター</button>
+          <button id="goal-face" type="button" class="choice" data-goal="face" aria-pressed="false">顔の特徴</button>
+        </div>
+        <p id="train-goal-note" class="hint"></p>
+        <label for="train-name">名前</label>
+        <input id="train-name" maxlength="40" placeholder="例: 水彩の画風">
+        <label for="train-trigger">呼び方</label>
+        <input id="train-trigger" maxlength="40" placeholder="例: rstyle" autocomplete="off">
+        <p class="hint">呼び方は、絵に出すときにプロンプトへ書く言葉です。普通の英単語は避けて、短い造語にしてください。</p>
+        <label for="train-checkpoint">基礎モデル</label>
+        <select id="train-checkpoint"></select>
+        <p id="train-flux-note" class="hint" hidden>顔の特徴は FLUX.2 用です。今は文章の下準備までできます。学習そのものは、次の対応で足します。</p>
+        <div id="train-settings" class="train-settings">
+          <label>大きさ
+            <select id="train-rank">
+              <option value="8">小さめ</option>
+              <option value="16">標準</option>
+              <option value="32">しっかり</option>
+            </select>
+          </label>
+          <label>1枚あたりの繰り返し
+            <input id="train-repeats" type="number" min="5" max="80" step="1" value="20">
+          </label>
+          <label>解像度
+            <select id="train-resolution">
+              <option value="768" selected>768</option>
+              <option value="1024">1024</option>
+            </select>
+          </label>
+        </div>
+        <div class="section-head">
+          <span class="label">画像</span>
+          <label class="file-button">画像を追加<input id="train-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
+        </div>
+        <p class="hint">5枚以上、15枚くらいが扱いやすいです。正方形に切り取って覚えます。学習中は、生成を待ってください。</p>
+        <div id="train-grid" class="train-grid"></div>
+        <label class="check-line"><input id="train-drop-face" type="checkbox"> 髪や目の説明は外して、呼び方に覚えさせる</label>
+        <label class="check-line"><input id="train-overwrite" type="checkbox"> すでにある説明も付け直す</label>
+        <div class="train-actions">
+          <button id="train-autotag" type="button">タグを自動で付ける</button>
+          <button id="train-start" type="button">学習を始める</button>
+          <button id="train-stop" type="button" hidden>学習を止める</button>
+        </div>
+        <p id="train-status" class="hint"></p>
+      </div>
+    </div>
   </dialog>
   <script src="/app.js"></script>
 </body>

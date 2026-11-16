@@ -17,5 +17,9 @@ studio/static/previews/
 # Muse 用の合言葉。この PC にだけ置く
 agent_token.txt
 
+# 学習用の画像と、タグ付けモデル。この PC にだけ置く
+datasets/
+studio/tagger/
+
 # Tailscale の許可ルールの控え。この PC にだけ置く
 tailscale-policy-backup.json

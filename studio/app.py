@@ -27,6 +27,8 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import train_api
+
 ROOT = Path(__file__).resolve().parents[1]
 COMFY_DIR = ROOT / "ComfyUI"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -1118,6 +1120,26 @@ def lora_fits(checkpoint_base: str, lora_base: str) -> bool:
     return checkpoint_base == lora_base
 
 
+def lora_listing(name: str) -> dict:
+    """カタログに無い LoRA でも、学習時に保存した呼び方を画面へ出す。"""
+    catalog = LORA_CATALOG.get(name, {})
+    label = catalog.get("name") or Path(name).stem
+    triggers = list(catalog.get("triggers") or [])
+    path = model_file("loras", name)
+    header = read_safetensors_header(path) if path else None
+    meta = header.get("__metadata__") if isinstance(header, dict) and isinstance(header.get("__metadata__"), dict) else {}
+    if not triggers and meta.get("atelier_trigger"):
+        triggers = [str(meta["atelier_trigger"])]
+    if not catalog.get("name") and meta.get("atelier_name"):
+        label = str(meta["atelier_name"])
+    return {
+        "name": label,
+        "triggers": triggers,
+        "shared": catalog.get("shared", []),
+        "outfits": catalog.get("outfits", []),
+    }
+
+
 def list_options() -> dict:
     not_ready = {
         "ready": False,
@@ -1152,11 +1174,8 @@ def list_options() -> dict:
         "loras": [
             {
                 "id": name,
-                "name": LORA_CATALOG.get(name, {}).get("name", Path(name).stem),
+                **lora_listing(name),
                 **card_fields(cards, "loras", name, LORA_CATALOG.get(name, {}).get("preview", "")),
-                "triggers": LORA_CATALOG.get(name, {}).get("triggers", []),
-                "shared": LORA_CATALOG.get(name, {}).get("shared", []),
-                "outfits": LORA_CATALOG.get(name, {}).get("outfits", []),
                 **base_fields("loras", name),
             }
             for name in loras
@@ -2149,6 +2168,40 @@ class StudioHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/image":
             self.send_image(urllib.parse.parse_qs(parsed.query))
             return
+        if parsed.path == "/api/train/status":
+            if not self.from_studio_get():
+                self.send_json({"error": "この操作は Atelier R の画面からだけ受け付けます。"}, status=403)
+                return
+            self.send_json(train_api.job_status())
+            return
+        if parsed.path == "/api/train/dataset":
+            query = urllib.parse.parse_qs(parsed.query)
+            if not self.from_studio_get():
+                self.send_json({"error": "この操作は Atelier R の画面からだけ受け付けます。"}, status=403)
+                return
+            try:
+                self.send_json(train_api.dataset_view((query.get("id") or [""])[0]))
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+            return
+        if parsed.path == "/api/train/image":
+            query = urllib.parse.parse_qs(parsed.query)
+            if not self.from_studio_get():
+                self.send_error(403)
+                return
+            try:
+                path = train_api.image_file((query.get("dataset") or [""])[0], (query.get("name") or [""])[0])
+            except ValueError:
+                self.send_error(404)
+                return
+            data = path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
         self.send_static(parsed.path)
 
     def request_host(self) -> str:
@@ -2164,6 +2217,14 @@ class StudioHandler(BaseHTTPRequestHandler):
     def from_studio_screen(self) -> bool:
         host = self.request_host()
         return host in studio_hosts() and self.request_origin() == f"http://{host}"
+
+    def from_studio_get(self) -> bool:
+        """GET は Origin が付かないブラウザがある。別のサイトからの Origin は拒む。"""
+        host = self.request_host()
+        if host not in studio_hosts():
+            return False
+        origin = self.request_origin()
+        return origin in {"", f"http://{host}"}
 
     def read_json_object(self, *, local_only: bool = False) -> dict | None:
         if local_only:
@@ -2268,6 +2329,91 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return
             self.send_json(saved)
             return
+        if path == "/api/train/dataset":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                dataset_id = str(body.get("id") or "")
+                if dataset_id:
+                    saved = train_api.update_dataset(dataset_id, str(body.get("name") or ""), str(body.get("goal") or ""), str(body.get("trigger") or ""))
+                else:
+                    saved = train_api.create_dataset(str(body.get("name") or ""), str(body.get("goal") or ""), str(body.get("trigger") or ""))
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+                return
+            self.send_json(saved)
+            return
+        if path == "/api/train/image":
+            fields = self.read_train_image()
+            if fields is None:
+                return
+            image = fields.get("image")
+            data = image.get("data") if isinstance(image, dict) else None
+            try:
+                saved = train_api.add_image(str(fields.get("dataset") or ""), data or b"")
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+                return
+            self.send_json(saved)
+            return
+        if path == "/api/train/caption":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                train_api.write_caption(str(body.get("dataset") or ""), str(body.get("name") or ""), str(body.get("text") or ""))
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+                return
+            self.send_json({"ok": True})
+            return
+        if path == "/api/train/delete-image":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                train_api.delete_image(str(body.get("dataset") or ""), str(body.get("name") or ""))
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+                return
+            self.send_json({"ok": True})
+            return
+        if path == "/api/train/autotag":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                saved = train_api.autotag(
+                    str(body.get("dataset") or ""),
+                    trigger=str(body.get("trigger") or ""),
+                    goal=str(body.get("goal") or ""),
+                    drop_face=bool(body.get("drop_face")),
+                    overwrite=bool(body.get("overwrite")),
+                )
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+                return
+            except Exception as error:
+                print(f"自動タグ付けに失敗しました: {error}", flush=True)
+                self.send_json({"error": "自動の説明を付けられませんでした。通信を確認してもう一度押してください。"}, status=500)
+                return
+            self.send_json(saved)
+            return
+        if path == "/api/train/start":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                self.begin_training(body)
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+            return
+        if path == "/api/train/stop":
+            if self.read_json_object() is None:
+                return
+            self.send_json(train_api.stop_training())
+            return
         if path == "/api/open-folder":
             if self.read_json_object(local_only=True) is None:
                 return
@@ -2323,6 +2469,53 @@ class StudioHandler(BaseHTTPRequestHandler):
         if for_muse:
             payload["status_url"] = f"/api/agent/jobs/{prompt_id}"
         self.send_json(payload)
+
+    def read_train_image(self) -> dict | None:
+        if not self.from_studio_screen():
+            self.send_json({"error": "この操作は Atelier R の画面からだけ受け付けます。"}, status=403)
+            return None
+        content_type = self.headers.get("Content-Type") or ""
+        if "multipart/form-data" not in content_type.lower():
+            self.send_json({"error": "送信形式が正しくありません。"}, status=415)
+            return None
+        boundary = ""
+        for piece in content_type.split(";"):
+            piece = piece.strip()
+            if piece.lower().startswith("boundary="):
+                boundary = piece.split("=", 1)[1].strip().strip('"')
+        if not boundary:
+            self.send_json({"error": "送信形式が正しくありません。"}, status=400)
+            return None
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self.send_json({"error": "送信内容を読めませんでした。"}, status=400)
+            return None
+        if length <= 0 or length > 12_000_000:
+            self.send_json({"error": "画像が大きすぎます。1枚12MBまでです。"}, status=400)
+            return None
+        return parse_multipart(self.rfile.read(length), boundary)
+
+    def begin_training(self, body: dict) -> None:
+        try:
+            queue = comfy_json("GET", "/queue")
+        except RuntimeError as error:
+            raise ValueError("画像エンジンに接続できませんでした。") from error
+        if not isinstance(queue, dict):
+            raise ValueError("画像エンジンの様子を確認できませんでした。")
+        if queue.get("queue_running") or queue.get("queue_pending"):
+            raise ValueError("生成が終わるまで待ってから、学習を始めてください。")
+        checkpoint_name = str(body.get("checkpoint") or "")
+        checkpoint = model_file("checkpoints", checkpoint_name)
+        if checkpoint is None or model_base("checkpoints", checkpoint_name) != "sdxl":
+            raise ValueError("SDXL の基礎モデルを選んでください。")
+        try:
+            comfy_json("POST", "/free", {"unload_models": True, "free_memory": True})
+        except RuntimeError:
+            pass
+        spec = dict(body)
+        spec["checkpoint"] = str(checkpoint)
+        self.send_json(train_api.start_training(spec))
 
     def send_json(self, payload: dict, status: int = 200) -> None:
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -2585,5 +2778,23 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    def _remember_trained_lora(info: dict) -> None:
+        output = str(info.get("output") or "")
+        preview = Path(str(info.get("preview") or ""))
+        if not output or not preview.is_file():
+            return
+        data = preview.read_bytes()
+        for _ in range(5):
+            try:
+                save_model_card("loras", output, "", data)
+                return
+            except ValueError:
+                time.sleep(1)
+            except Exception as error:
+                print(f"学習した LoRA のサムネイルを付けられませんでした: {error}", flush=True)
+                return
+        print("学習した LoRA は保存しました。サムネイルは、一覧のカードから後で入れられます。", flush=True)
+
+    train_api.set_on_done(_remember_trained_lora)
     os.chdir(ROOT)
     main()

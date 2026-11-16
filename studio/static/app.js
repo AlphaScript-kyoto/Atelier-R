@@ -1244,6 +1244,7 @@ async function openOutputFolder() {
 }
 
 loadOptions();
+setupTraining();
 
 if (fluxGuidance) {
   fluxGuidance.addEventListener("input", () => { fluxGuidance.dataset.touched = "1"; });
@@ -1272,3 +1273,259 @@ if (fluxGuidance) {
   });
   document.addEventListener("focusout", () => setTimeout(update, 100));
 })();
+
+function setupTraining() {
+  const dialog = document.querySelector("#train");
+  const nameInput = document.querySelector("#train-name");
+  const triggerInput = document.querySelector("#train-trigger");
+  const checkpointInput = document.querySelector("#train-checkpoint");
+  const rankInput = document.querySelector("#train-rank");
+  const repeatsInput = document.querySelector("#train-repeats");
+  const resolutionInput = document.querySelector("#train-resolution");
+  const fileInput = document.querySelector("#train-files");
+  const grid = document.querySelector("#train-grid");
+  const note = document.querySelector("#train-goal-note");
+  const fluxNote = document.querySelector("#train-flux-note");
+  const settings = document.querySelector("#train-settings");
+  const dropFace = document.querySelector("#train-drop-face");
+  const overwrite = document.querySelector("#train-overwrite");
+  const autoButton = document.querySelector("#train-autotag");
+  const startButton = document.querySelector("#train-start");
+  const stopButton = document.querySelector("#train-stop");
+  const trainStatus = document.querySelector("#train-status");
+  const notes = {
+    style: "画風を覚えます。タグには、写っている人や物を残します。画風そのものは書かないので、呼び方の方に残ります。",
+    character: "キャラクターを覚えます。髪や目のタグを外すと、その特徴は呼び方に結び付きます。",
+    face: "顔の特徴を、FLUX.2 向けの短い英語で下準備します。学習そのものは次の対応です。髪や目の説明を外すと、顔は呼び方の方に残りやすくなります。",
+  };
+  let goal = "style";
+  let datasetId = "";
+  let polling = false;
+  let seenDone = false;
+
+  function setTrainStatus(text, isError) {
+    trainStatus.textContent = text || "";
+    trainStatus.classList.toggle("is-error", Boolean(isError));
+  }
+
+  async function trainPost(url, body) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "失敗しました。");
+    return data;
+  }
+
+  function paintGoal() {
+    document.querySelectorAll(".train-goal .choice").forEach((button) => {
+      button.setAttribute("aria-pressed", button.dataset.goal === goal ? "true" : "false");
+    });
+    note.textContent = notes[goal];
+    const face = goal === "face";
+    fluxNote.hidden = !face;
+    settings.hidden = face;
+    startButton.hidden = face;
+    autoButton.textContent = face ? "文章を自動で付ける" : "タグを自動で付ける";
+    if (goal === "style") {
+      rankInput.value = "8";
+      repeatsInput.value = "20";
+      dropFace.checked = false;
+    } else if (goal === "character") {
+      rankInput.value = "16";
+      repeatsInput.value = "30";
+      dropFace.checked = true;
+    } else {
+      dropFace.checked = true;
+    }
+    if (!triggerInput.dataset.touched) {
+      triggerInput.value = goal === "style" ? "rstyle" : goal === "character" ? "rchar" : "rface";
+    }
+  }
+
+  function fillCheckpoints() {
+    const current = checkpointSelect.value;
+    checkpointInput.replaceChildren();
+    checkpointItems.filter((item) => item.base === "sdxl").forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = item.name;
+      if (item.id === current) option.selected = true;
+      checkpointInput.appendChild(option);
+    });
+  }
+
+  function renderImages(images) {
+    grid.replaceChildren();
+    images.forEach((item) => {
+      const card = document.createElement("article");
+      card.className = "train-card";
+      const photo = document.createElement("img");
+      photo.alt = "";
+      photo.src = `/api/train/image?dataset=${encodeURIComponent(datasetId)}&name=${encodeURIComponent(item.name)}`;
+      const tools = document.createElement("div");
+      const caption = document.createElement("textarea");
+      caption.value = item.caption || "";
+      caption.placeholder = "自動で付けるか、自分で書きます";
+      caption.addEventListener("change", async () => {
+        try {
+          await trainPost("/api/train/caption", { dataset: datasetId, name: item.name, text: caption.value });
+        } catch (error) {
+          setTrainStatus(error.message, true);
+        }
+      });
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "外す";
+      remove.addEventListener("click", async () => {
+        try {
+          await trainPost("/api/train/delete-image", { dataset: datasetId, name: item.name });
+          card.remove();
+        } catch (error) {
+          setTrainStatus(error.message, true);
+        }
+      });
+      tools.className = "train-card-tools";
+      tools.append(remove);
+      const side = document.createElement("div");
+      side.append(caption, tools);
+      card.append(photo, side);
+      grid.appendChild(card);
+    });
+  }
+
+  async function ensureDataset() {
+    const saved = await trainPost("/api/train/dataset", {
+      id: datasetId,
+      name: nameInput.value.trim(),
+      goal,
+      trigger: triggerInput.value.trim(),
+    });
+    datasetId = saved.id;
+    return saved;
+  }
+
+  async function pollTrain() {
+    if (polling) return;
+    polling = true;
+    try {
+      const response = await fetch("/api/train/status");
+      if (!response.ok) return;
+      const data = await response.json();
+      const running = data.state === "running";
+      stopButton.hidden = !running;
+      startButton.disabled = running;
+      if (running) {
+        const loss = data.loss == null ? "" : ` 誤差 ${data.loss}`;
+        const text = `${data.message || "学習中です。"} ${data.step || 0}/${data.total || 0}${loss}`;
+        setTrainStatus(text, false);
+        statusLine.textContent = text;
+        setTimeout(pollTrain, 2000);
+      } else if (data.state === "error" || data.state === "stopped") {
+        setTrainStatus(data.message || "", data.state === "error");
+      } else if (data.state === "done" && !seenDone) {
+        seenDone = true;
+        setTrainStatus(data.message || "学習が終わりました。", false);
+        await loadOptions();
+        statusLine.textContent = "学習が終わりました。LoRA の一覧から追加できます。";
+      }
+    } catch (error) {
+      setTrainStatus("進み具合を確認できませんでした。", true);
+    } finally {
+      polling = false;
+    }
+  }
+
+  document.querySelector("#train-open").addEventListener("click", () => {
+    fillCheckpoints();
+    paintGoal();
+    dialog.showModal();
+    pollTrain();
+  });
+  document.querySelector("#train-close").addEventListener("click", () => dialog.close());
+  document.querySelector("#train-scrim").addEventListener("click", () => dialog.close());
+  document.querySelectorAll(".train-goal .choice").forEach((button) => {
+    button.addEventListener("click", () => {
+      goal = button.dataset.goal;
+      paintGoal();
+    });
+  });
+  triggerInput.addEventListener("input", () => { triggerInput.dataset.touched = "1"; });
+  fileInput.addEventListener("change", async () => {
+    const files = [...fileInput.files];
+    fileInput.value = "";
+    if (!files.length) return;
+    setTrainStatus("画像を加えています。", false);
+    try {
+      await ensureDataset();
+      for (const file of files) {
+        const form = new FormData();
+        form.set("dataset", datasetId);
+        form.set("image", file);
+        const response = await fetch("/api/train/image", { method: "POST", body: form });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "画像を加えられませんでした。");
+      }
+      renderImages((await ensureDataset()).images);
+      setTrainStatus(`${files.length} 枚加えました。`, false);
+    } catch (error) {
+      setTrainStatus(error.message, true);
+    }
+  });
+  autoButton.addEventListener("click", async () => {
+    autoButton.disabled = true;
+    setTrainStatus(goal === "face" ? "文章を付けています。最初の1回は、説明用のモデルを取り込むので少し待ちます。" : "タグを付けています。", false);
+    try {
+      const saved = await ensureDataset();
+      const tagged = await trainPost("/api/train/autotag", {
+        dataset: saved.id,
+        trigger: triggerInput.value.trim(),
+        goal,
+        drop_face: dropFace.checked,
+        overwrite: overwrite.checked,
+      });
+      renderImages(tagged.images);
+      setTrainStatus(tagged.note || `${tagged.changed} 枚に説明を付けました。気になるところは書き直せます。`, false);
+    } catch (error) {
+      setTrainStatus(error.message, true);
+    } finally {
+      autoButton.disabled = false;
+    }
+  });
+  startButton.addEventListener("click", async () => {
+    startButton.disabled = true;
+    setTrainStatus("学習を始めています。", false);
+    try {
+      const saved = await ensureDataset();
+      if ((saved.images || []).length < 5) throw new Error("画像は 5 枚以上にしてください。");
+      seenDone = false;
+      await trainPost("/api/train/start", {
+        dataset: saved.id,
+        checkpoint: checkpointInput.value,
+        goal,
+        trigger: triggerInput.value.trim(),
+        name: nameInput.value.trim() || triggerInput.value.trim(),
+        rank: Number(rankInput.value),
+        repeats: Number(repeatsInput.value),
+        resolution: Number(resolutionInput.value),
+        output: `${triggerInput.value.trim() || "lora"}_${goal}`,
+      });
+      pollTrain();
+    } catch (error) {
+      setTrainStatus(error.message, true);
+      startButton.disabled = false;
+    }
+  });
+  stopButton.addEventListener("click", async () => {
+    try {
+      await trainPost("/api/train/stop", {});
+      setTrainStatus("学習を止めています。", false);
+    } catch (error) {
+      setTrainStatus(error.message, true);
+    }
+  });
+  paintGoal();
+  pollTrain();
+}
