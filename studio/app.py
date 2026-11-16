@@ -68,6 +68,17 @@ LORA_CATALOG = {
             "super creek \\(umamusume\\)",
         ],
     },
+    "hina_flux2klein4b_asianMix_v5.0-lora.safetensors": {
+        "name": "Hina Asian Mix v5",
+        "triggers": [
+            "Hyper-realistic photographic",
+            "extremely high-resolution details",
+            "realism pushed to extreme",
+            "fine texture",
+            "incredibly lifelike",
+            "asian woman",
+        ],
+    },
     "Elegg_-_Goddess_of_Victory_Nikke_Various_Outfits.safetensors": {
         "name": "Elegg",
         "triggers": ["EleggNK"],

@@ -114,6 +114,15 @@ Invoke-RestMethod http://127.0.0.1:8189/api/agent/options -Headers $headers
 
    Elegg（`Elegg_-_Goddess_of_Victory_Nikke_Various_Outfits.safetensors`）を足すと、衣装ごとの言葉が出ます。呼び方は `EleggNK` です。**見た目** は髪と目で、どの衣装でも共通です。衣装の名前の横にある **この衣装** を押すと、呼び方と見た目とその衣装の言葉がまとめて入ります。別の衣装の言葉は入りません。サイトに `whte socks` と `oficial alternate costume` と書いてある綴りは、そのままで残しています。
 
+   Hina Asian Mix v5（`hina_flux2klein4b_asianMix_v5.0-lora.safetensors`）を足すと、写真らしい描写の言葉が出ます。**すべて使用** を押すと、次の6つがまとめて入ります。
+
+   - Hyper-realistic photographic
+   - extremely high-resolution details
+   - realism pushed to extreme
+   - fine texture
+   - incredibly lifelike
+   - asian woman
+
    新しい LoRA は、`models/loras` に `.safetensors` を置いてから Atelier R を終了し、開き直すと一覧に出ます。表示名や言葉を別に用意していないファイルは、ファイル名のまま出ます。
 3. **縦横比** のボタンを押すと、幅と高さがその比率の大きさに変わります。最初は `9:16` です。
 
