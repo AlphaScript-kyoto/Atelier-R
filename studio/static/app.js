@@ -39,6 +39,88 @@ const MAX_LORAS = 5;
 let reuseSeed = null;
 let outputFolder = "";
 
+// ---- ベースモデル（FLUX / SDXL / SD1.5 など）ごとの表示 ----
+const BASE_ORDER_FALLBACK = [
+  { id: "flux2", label: "FLUX.2" },
+  { id: "flux", label: "FLUX.1" },
+  { id: "sdxl", label: "SDXL" },
+  { id: "sd3", label: "SD3" },
+  { id: "sd2", label: "SD2.x" },
+  { id: "sd15", label: "SD1.5" },
+  { id: "unknown", label: "不明" },
+];
+let baseGroups = BASE_ORDER_FALLBACK;
+let fluxDefaults = { steps: 20, guidance: 3.5 };
+const fluxSection = document.querySelector("#flux-settings");
+const fluxGuidance = document.querySelector("#flux-guidance");
+const negativeNote = document.querySelector("#negative-flux-note");
+const brandEyebrow = document.querySelector(".brand .eyebrow");
+
+function baseOf(item) {
+  return (item && item.base) || "unknown";
+}
+
+function baseLabel(base) {
+  const found = baseGroups.find((group) => group.id === base);
+  return found ? found.label : "不明";
+}
+
+function currentCheckpointBase() {
+  return baseOf(checkpointItems.find((entry) => entry.id === checkpointSelect.value));
+}
+
+// サーバーと同じ考え方: はっきり別のベースモデル用と分かる LoRA だけを外す。
+function loraFits(lora, checkpointBase = currentCheckpointBase()) {
+  const loraBase = baseOf(lora);
+  if (checkpointBase === "unknown" || loraBase === "unknown") return true;
+  return checkpointBase === loraBase;
+}
+
+function groupByBase(items) {
+  return baseGroups
+    .map((group) => ({ ...group, items: items.filter((item) => baseOf(item) === group.id) }))
+    .filter((group) => group.items.length);
+}
+
+function baseBadge(base) {
+  const badge = document.createElement("span");
+  badge.className = `base-badge base-${base}`;
+  badge.textContent = baseLabel(base);
+  return badge;
+}
+
+function groupHeading(text, note) {
+  const heading = document.createElement("h3");
+  heading.className = "picker-group";
+  heading.textContent = text;
+  if (note) {
+    const small = document.createElement("small");
+    small.textContent = note;
+    heading.appendChild(small);
+  }
+  return heading;
+}
+
+function paintBaseUi() {
+  const base = currentCheckpointBase();
+  const item = checkpointItems.find((entry) => entry.id === checkpointSelect.value);
+  const isFlux = base === "flux";
+  // FLUX.1 と FLUX.2 Klein 蒸留版はネガティブを使わない。サーバーが uses_negative を返すときはそれに従う。
+  const ignoresNegative = isFlux || (item && item.uses_negative === false);
+  if (brandEyebrow) brandEyebrow.textContent = baseLabel(base) === "不明" ? "MODEL" : baseLabel(base);
+  if (fluxSection) fluxSection.hidden = !isFlux;
+  if (negativeNote) {
+    negativeNote.hidden = !ignoresNegative;
+    negativeNote.textContent = `${item ? item.name : "このモデル"} ではこの欄は使われません。`;
+  }
+}
+
+function fluxGuidanceValue() {
+  const value = Number(fluxGuidance && fluxGuidance.value);
+  if (!Number.isFinite(value)) return fluxDefaults.guidance;
+  return Math.min(10, Math.max(0, value));
+}
+
 function addLora(id) {
   if (!id || selectedLoras.some((item) => item.id === id)) return;
   if (selectedLoras.length >= MAX_LORAS) {
@@ -118,10 +200,11 @@ const cardHeading = document.querySelector("#card-heading");
 const cardFile = document.querySelector("#card-file");
 const cardUrl = document.querySelector("#card-url");
 
-function modelTile(item, pressed, onPick) {
+function modelTile(item, pressed, onPick, options = {}) {
   const tile = document.createElement("div");
   tile.className = "model-tile";
   if (pressed) tile.classList.add("is-selected");
+  if (options.disabled) tile.classList.add("is-disabled");
   const hit = document.createElement("button");
   hit.type = "button";
   hit.className = "tile-hit";
@@ -142,7 +225,13 @@ function modelTile(item, pressed, onPick) {
   name.className = "tile-name";
   name.textContent = item.name;
   hit.appendChild(name);
-  hit.addEventListener("click", onPick);
+  hit.appendChild(baseBadge(baseOf(item)));
+  if (options.disabled) {
+    hit.disabled = true;
+    hit.title = options.disabledReason || "";
+  } else {
+    hit.addEventListener("click", onPick);
+  }
   tile.appendChild(hit);
   const actions = document.createElement("div");
   actions.className = "tile-actions";
@@ -187,6 +276,7 @@ function renderCheckpointCurrent() {
   }
   const name = document.createElement("strong");
   name.textContent = item.name;
+  name.appendChild(baseBadge(baseOf(item)));
   const button = document.createElement("button");
   button.type = "button";
   button.className = "switch-model";
@@ -194,6 +284,7 @@ function renderCheckpointCurrent() {
   button.addEventListener("click", () => openPicker("checkpoints"));
   card.append(name, button);
   checkpointCurrent.appendChild(card);
+  paintBaseUi();
 }
 
 function renderPicker() {
@@ -201,18 +292,38 @@ function renderPicker() {
   pickerGrid.replaceChildren();
   if (picker.dataset.kind === "checkpoints") {
     const current = checkpointSelect.value;
-    checkpointItems.forEach((item) => {
-      pickerGrid.appendChild(modelTile(item, item.id === current, () => {
-        checkpointSelect.value = item.id;
-        renderCheckpointCurrent();
-        picker.close();
-      }));
+    groupByBase(checkpointItems).forEach((group) => {
+      pickerGrid.appendChild(groupHeading(group.label, `${group.items.length}件`));
+      group.items.forEach((item) => {
+        pickerGrid.appendChild(modelTile(item, item.id === current, () => {
+          checkpointSelect.value = item.id;
+          renderCheckpointCurrent();
+          renderLoraStack();
+          picker.close();
+        }));
+      });
     });
     return;
   }
   const used = new Set(selectedLoras.map((item) => item.id));
-  loraInfo.forEach((item) => {
-    pickerGrid.appendChild(modelTile(item, used.has(item.id), () => addLora(item.id)));
+  const checkpointBase = currentCheckpointBase();
+  const groups = groupByBase(loraInfo);
+  const fitting = groups.filter((group) => group.items.some((item) => loraFits(item, checkpointBase)));
+  const other = groups.filter((group) => !group.items.some((item) => loraFits(item, checkpointBase)));
+  fitting.forEach((group) => {
+    pickerGrid.appendChild(groupHeading(group.label, `${group.items.length}件`));
+    group.items.forEach((item) => {
+      pickerGrid.appendChild(modelTile(item, used.has(item.id), () => addLora(item.id)));
+    });
+  });
+  other.forEach((group) => {
+    pickerGrid.appendChild(groupHeading(group.label, `今の基礎モデル（${baseLabel(checkpointBase)}）では使えません`));
+    group.items.forEach((item) => {
+      pickerGrid.appendChild(modelTile(item, used.has(item.id), () => {}, {
+        disabled: true,
+        disabledReason: `${baseLabel(baseOf(item))} 用の LoRA です。${baseLabel(checkpointBase)} では使えません。`,
+      }));
+    });
   });
 }
 
@@ -336,9 +447,17 @@ function renderLoraStack() {
       selectedLoras.splice(index, 1);
       renderLoraStack();
     });
+    strong.appendChild(baseBadge(baseOf(info)));
     title.append(strong, remove);
     top.appendChild(title);
     card.appendChild(top);
+    if (info && !loraFits(info)) {
+      card.classList.add("is-unfit");
+      const warn = document.createElement("p");
+      warn.className = "lora-unfit";
+      warn.textContent = `${baseLabel(baseOf(info))} 用なので、今の基礎モデル（${baseLabel(currentCheckpointBase())}）では使われません。`;
+      card.appendChild(warn);
+    }
 
     const row = document.createElement("div");
     row.className = "strength-row";
@@ -527,14 +646,24 @@ async function loadOptions() {
     setTimeout(loadOptions, 2000);
     return;
   }
+  if (Array.isArray(data.base_groups) && data.base_groups.length) baseGroups = data.base_groups;
+  if (data.flux_defaults) {
+    fluxDefaults = { ...fluxDefaults, ...data.flux_defaults };
+    if (fluxGuidance && !fluxGuidance.dataset.touched) fluxGuidance.value = String(fluxDefaults.guidance);
+  }
   checkpointItems = data.checkpoints.map((item) => ({ ...item, kind: "checkpoints" }));
   checkpointSelect.replaceChildren();
-  checkpointItems.forEach((item) => {
-    const option = document.createElement("option");
-    option.value = item.id;
-    option.textContent = item.name;
-    if (item.name === "Holy Mix") option.selected = true;
-    checkpointSelect.appendChild(option);
+  groupByBase(checkpointItems).forEach((group) => {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = group.label;
+    group.items.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = item.name;
+      if (item.name === "Holy Mix") option.selected = true;
+      optgroup.appendChild(option);
+    });
+    checkpointSelect.appendChild(optgroup);
   });
   if (!checkpointSelect.value && checkpointItems[0]) checkpointSelect.value = checkpointItems[0].id;
   renderCheckpointCurrent();
@@ -577,6 +706,8 @@ function currentSettings(seed) {
     count: selectedCount,
     seed,
     created: new Date().toLocaleString("ja-JP"),
+    base: currentCheckpointBase(),
+    guidance: currentCheckpointBase() === "flux" ? fluxGuidanceValue() : undefined,
   };
 }
 
@@ -745,6 +876,7 @@ form.addEventListener("submit", async (event) => {
     height: settings.height,
     count: settings.count,
     seed,
+    ...(settings.base === "flux" ? { guidance: settings.guidance } : {}),
   }, settings);
 });
 
@@ -922,7 +1054,7 @@ document.querySelector("#composer").addEventListener("click", (event) => {
 phoneQuery.addEventListener("change", () => setSheet(false));
 document.addEventListener("touchmove", (event) => {
   if (!document.body.classList.contains("scroll-lock")) return;
-  if (event.target.closest(".side, #composer, .detail-side")) return;
+  if (event.target.closest(".side, #composer, .detail-side, .detail-layout, #picker-grid")) return;
   event.preventDefault();
 }, { passive: false });
 
@@ -985,7 +1117,13 @@ detailPrev.addEventListener("click", () => moveDetail(-1));
 detailNext.addEventListener("click", () => moveDetail(1));
 document.querySelector("#detail-scrim").addEventListener("click", () => detail.close());
 document.querySelector("#detail-back").addEventListener("click", () => detail.close());
-document.querySelector("#detail-info").addEventListener("click", () => detail.classList.add("info-open"));
+document.querySelector("#detail-info").addEventListener("click", () => {
+  if (isPhone()) {
+    document.querySelector(".detail-side").scrollIntoView({ block: "start", behavior: "smooth" });
+    return;
+  }
+  detail.classList.add("info-open");
+});
 document.querySelector("#detail-info-scrim").addEventListener("click", () => detail.close());
 document.querySelector(".detail-stage").addEventListener("click", (event) => {
   if (!isPhone() || event.target.closest("button, img")) return;
@@ -1062,6 +1200,7 @@ function runFromDetail(mode) {
     height: settings.height,
     source,
   };
+  if (settings.guidance !== undefined && settings.guidance !== null) payload.guidance = settings.guidance;
   if (mode === "expand") payload.pad = Number(detailPad.value);
   startJob(payload, next);
 }
@@ -1071,6 +1210,9 @@ detailExpand.addEventListener("click", () => runFromDetail("expand"));
 
 function applySettings(settings) {
   checkpointSelect.value = settings.checkpoint;
+  if (fluxGuidance && settings.guidance !== undefined && settings.guidance !== null) {
+    fluxGuidance.value = String(settings.guidance);
+  }
   renderCheckpointCurrent();
   if (Array.isArray(settings.loras)) {
     selectedLoras = settings.loras.map((item) => ({ id: item.id, strength: Number(item.strength) }));
@@ -1102,3 +1244,31 @@ async function openOutputFolder() {
 }
 
 loadOptions();
+
+if (fluxGuidance) {
+  fluxGuidance.addEventListener("input", () => { fluxGuidance.dataset.touched = "1"; });
+}
+
+/* 2026-11-16f: iPhoneでキーボードが出ても入力欄が見えるよう、見えている高さに合わせる */
+(() => {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const root = document.documentElement;
+  const update = () => {
+    root.style.setProperty("--vvh", vv.height + "px");
+    root.style.setProperty("--vvtop", vv.offsetTop + "px");
+    const kb = isPhone() && vv.height < window.innerHeight * 0.85;
+    document.body.classList.toggle("kb-open", kb);
+  };
+  vv.addEventListener("resize", update);
+  vv.addEventListener("scroll", update);
+  update();
+  document.addEventListener("focusin", (event) => {
+    if (!isPhone() || !event.target.matches("textarea, input, select")) return;
+    setTimeout(() => {
+      update();
+      event.target.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 300);
+  });
+  document.addEventListener("focusout", () => setTimeout(update, 100));
+})();

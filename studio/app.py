@@ -813,7 +813,10 @@ def known_model_ids(kind: str) -> set[str]:
     names = comfy_json("GET", path)
     if not isinstance(names, list):
         return set()
-    return {name for name in names if isinstance(name, str)}
+    known = {name for name in names if isinstance(name, str)}
+    if kind == "checkpoints":
+        known |= {item["id"] for item in unet_options(known)}
+    return known
 
 
 def save_model_card(kind: str, model_id: str, url: str, image: bytes | None) -> dict:
@@ -844,6 +847,277 @@ def save_model_card(kind: str, model_id: str, url: str, image: bytes | None) -> 
     return {"ok": True, "preview": shown["preview"], "url": shown["url"]}
 
 
+# ---- ベースモデルの判定（FLUX / SDXL / SD1.5 など） ----
+# safetensors の先頭にあるヘッダー（メタデータとテンソル名）だけを読んで判定する。
+# 結果は (パス, サイズ, 更新時刻) ごとに base_model_cache.json へ覚えておく。
+BASE_CACHE_PATH = Path(__file__).resolve().parent / "base_model_cache.json"
+BASE_LABELS = {
+    "flux2": "FLUX.2",
+    "flux": "FLUX.1",
+    "sdxl": "SDXL",
+    "sd3": "SD3",
+    "sd2": "SD2.x",
+    "sd15": "SD1.5",
+    "unknown": "不明",
+}
+BASE_ORDER = ["flux2", "flux", "sdxl", "sd3", "sd2", "sd15", "unknown"]
+FLUX_DEFAULT_STEPS = 20
+FLUX_DEFAULT_GUIDANCE = 3.5
+# FLUX.2 Klein は分離構成（diffusion_models / text_encoders / vae）。公式ワークフローの値に合わせる。
+#   蒸留版: 4 ステップ、cfg 1.0、ネガティブは ConditioningZeroOut
+#   base 版: 20 ステップ、cfg 5.0、ネガティブあり
+FLUX2_DISTILLED = {"steps": 4, "cfg": 1.0}
+FLUX2_BASE = {"steps": 20, "cfg": 5.0}
+# txt_in の入力幅から、組み合わせるテキストエンコーダーを決める（Klein 4B は Qwen3 4B、9B は Qwen3 8B）。
+FLUX2_TEXT_ENCODERS = {7680: "qwen_3_4b", 12288: "qwen_3_8b"}
+UNET_NAMES = {
+    "flux-2-klein-4b-fp8.safetensors": "FLUX.2 Klein 4B",
+    "flux-2-klein-4b.safetensors": "FLUX.2 Klein 4B",
+    "flux-2-klein-base-4b.safetensors": "FLUX.2 Klein 4B Base",
+    "flux-2-klein-base-4b-fp8.safetensors": "FLUX.2 Klein 4B Base",
+}
+_base_lock = threading.Lock()
+_base_cache: dict | None = None
+_folder_cache: dict = {"at": 0.0, "paths": {}}
+
+
+def model_folders(kind: str) -> list[Path]:
+    """ComfyUI が実際に見ているフォルダ（extra_model_paths.yaml を含む）を返す。"""
+    now = time.time()
+    if now - _folder_cache["at"] > 60 or kind not in _folder_cache["paths"]:
+        try:
+            data = comfy_json("GET", "/internal/folder_paths", timeout=5)
+            if isinstance(data, dict):
+                _folder_cache["paths"] = {
+                    key: [str(item) for item in value if isinstance(item, str)]
+                    for key, value in data.items()
+                    if isinstance(value, list)
+                }
+                _folder_cache["at"] = now
+        except RuntimeError:
+            pass
+    found = [Path(item) for item in _folder_cache["paths"].get(kind, [])]
+    if not found:
+        found = [COMFY_DIR / "models" / kind]
+        if kind == "checkpoints":
+            found.append(ROOT / "Lora" / "chekpoint")
+        elif kind == "loras":
+            found.append(ROOT / "models" / "loras")
+    return found
+
+
+def model_file(kind: str, name: str) -> Path | None:
+    for folder in model_folders(kind):
+        path = folder / name
+        if path.is_file():
+            return path
+    return None
+
+
+def read_safetensors_header(path: Path) -> dict | None:
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(8)
+            if len(head) != 8:
+                return None
+            size = struct.unpack("<Q", head)[0]
+            if size <= 0 or size > 100_000_000:
+                return None
+            data = json.loads(handle.read(size).decode("utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def base_from_text(text: str) -> str:
+    text = text.lower()
+    if "flux2" in text or "flux-2" in text or "flux.2" in text or "flux_2" in text:
+        return "flux2"
+    if "flux" in text:
+        return "flux"
+    if "sdxl" in text or "stable-diffusion-xl" in text:
+        return "sdxl"
+    if "sd3" in text or "stable-diffusion-v3" in text:
+        return "sd3"
+    if text.startswith("sd_v2") or "stable-diffusion-v2" in text:
+        return "sd2"
+    if text.startswith("sd_v1") or "stable-diffusion-v1" in text:
+        return "sd15"
+    return ""
+
+
+def cross_attention_base(header: dict) -> str:
+    """LoRA の attn2 の to_k の入力幅で SDXL(2048) / SD2(1024) / SD1.5(768) を見分ける。"""
+    for key, value in header.items():
+        low = key.lower()
+        if "attn2" not in low or "to_k" not in low:
+            continue
+        if not ("lora_down" in low or "lora_a" in low or "lora.down" in low):
+            continue
+        shape = value.get("shape") if isinstance(value, dict) else None
+        if isinstance(shape, list) and len(shape) >= 2:
+            width = shape[-1]
+            if width == 2048:
+                return "sdxl"
+            if width == 1024:
+                return "sd2"
+            if width == 768:
+                return "sd15"
+    return ""
+
+
+def detect_base(kind: str, header: dict | None) -> str:
+    if not header:
+        return "unknown"
+    meta = header.get("__metadata__") if isinstance(header.get("__metadata__"), dict) else {}
+    for field in ("ss_base_model_version", "modelspec.architecture"):
+        found = base_from_text(str(meta.get(field) or ""))
+        if found:
+            return found
+    keys = [key for key in header if key != "__metadata__"]
+    if any("double_stream_modulation" in key or "single_stream_modulation" in key for key in keys):
+        return "flux2"
+    if any("double_blocks" in key or "single_blocks" in key or "single_transformer_blocks" in key for key in keys):
+        return "flux"
+    if any("joint_blocks" in key for key in keys):
+        return "sd3"
+    if kind == "checkpoints":
+        if any(key.startswith("conditioner.embedders.") or key.startswith("model.diffusion_model.label_emb") for key in keys):
+            return "sdxl"
+        if any(key.startswith("cond_stage_model.model.transformer") for key in keys):
+            return "sd2"
+        if any(key.startswith("cond_stage_model.transformer") for key in keys):
+            return "sd15"
+        return "unknown"
+    if any(key.startswith("lora_transformer_") or key.startswith("transformer.") for key in keys):
+        return "flux"
+    if any(key.startswith("lora_te1_") or key.startswith("lora_te2_") or "text_encoder_2" in key for key in keys):
+        return "sdxl"
+    return cross_attention_base(header) or "unknown"
+
+
+def _load_base_cache() -> dict:
+    global _base_cache
+    if _base_cache is None:
+        try:
+            data = json.loads(BASE_CACHE_PATH.read_text(encoding="utf-8"))
+            _base_cache = data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            _base_cache = {}
+    return _base_cache
+
+
+def txt_in_width(header: dict | None) -> int:
+    if not header:
+        return 0
+    for key, value in header.items():
+        if key.endswith("txt_in.weight") and isinstance(value, dict):
+            shape = value.get("shape")
+            if isinstance(shape, list) and len(shape) == 2:
+                return int(shape[1])
+    return 0
+
+
+def model_info(kind: str, name: str) -> dict:
+    """ベースモデル（と、分離構成のモデルなら txt_in の幅）。結果はキャッシュする。"""
+    unknown = {"base": "unknown", "txt_in": 0}
+    path = model_file(kind, name)
+    if path is None or path.suffix.lower() != ".safetensors":
+        return unknown
+    try:
+        stat = path.stat()
+    except OSError:
+        return unknown
+    stamp = f"{stat.st_size}:{stat.st_mtime_ns}"
+    key = f"{kind}|{path}"
+    with _base_lock:
+        cache = _load_base_cache()
+        item = cache.get(key)
+        if (
+            isinstance(item, dict)
+            and item.get("stamp") == stamp
+            and item.get("base") in BASE_LABELS
+            and (kind != "diffusion_models" or "txt_in" in item)
+        ):
+            return {"base": item["base"], "txt_in": int(item.get("txt_in") or 0)}
+    header = read_safetensors_header(path)
+    entry = {"stamp": stamp, "base": detect_base(kind, header)}
+    if kind == "diffusion_models":
+        entry["txt_in"] = txt_in_width(header)
+    with _base_lock:
+        cache = _load_base_cache()
+        cache[key] = entry
+        try:
+            BASE_CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")
+        except OSError:
+            pass
+    return {"base": entry["base"], "txt_in": int(entry.get("txt_in") or 0)}
+
+
+def model_base(kind: str, name: str) -> str:
+    return model_info(kind, name)["base"]
+
+
+def pick_file(names: list, prefix: str) -> str:
+    """prefix で始まるファイルのうち、fp4 などの特殊版より素の版を優先する。"""
+    if not prefix:
+        return ""
+    found = [name for name in names if isinstance(name, str) and Path(name).name.lower().startswith(prefix)]
+    found.sort(key=lambda name: (Path(name).name.lower() != f"{prefix}.safetensors", "fp4" in name.lower(), name))
+    return found[0] if found else ""
+
+
+def unet_options(skip: set[str]) -> list[dict]:
+    """diffusion_models のうち、Atelier R でグラフを組める FLUX.2 Klein を選択肢にする。"""
+    try:
+        unets = comfy_json("GET", "/models/diffusion_models")
+        encoders = comfy_json("GET", "/models/text_encoders")
+        vaes = comfy_json("GET", "/models/vae")
+    except RuntimeError:
+        return []
+    if not isinstance(unets, list):
+        return []
+    encoders = encoders if isinstance(encoders, list) else []
+    vaes = vaes if isinstance(vaes, list) else []
+    found = []
+    for name in unets:
+        if not isinstance(name, str) or name in skip:
+            continue
+        info = model_info("diffusion_models", name)
+        if info["base"] != "flux2":
+            continue
+        encoder = pick_file(encoders, FLUX2_TEXT_ENCODERS.get(info["txt_in"], ""))
+        vae = pick_file(vaes, "flux2-vae")
+        if not encoder or not vae:
+            continue
+        distilled = "base" not in Path(name).stem.lower().split("-")
+        found.append({
+            "id": name,
+            "name": UNET_NAMES.get(name, Path(name).stem),
+            "base": "flux2",
+            "base_label": BASE_LABELS["flux2"],
+            "folder": "diffusion_models",
+            "text_encoder": encoder,
+            "vae": vae,
+            "distilled": distilled,
+            "uses_negative": not distilled,
+            "default_steps": (FLUX2_DISTILLED if distilled else FLUX2_BASE)["steps"],
+        })
+    return found
+
+
+def base_fields(kind: str, name: str) -> dict:
+    base = model_base(kind, name)
+    return {"base": base, "base_label": BASE_LABELS.get(base, BASE_LABELS["unknown"])}
+
+
+def lora_fits(checkpoint_base: str, lora_base: str) -> bool:
+    """はっきり別のベースモデル用と分かる LoRA だけを外す。不明なものは使う。"""
+    if checkpoint_base == "unknown" or lora_base == "unknown":
+        return True
+    return checkpoint_base == lora_base
+
+
 def list_options() -> dict:
     not_ready = {
         "ready": False,
@@ -868,8 +1142,12 @@ def list_options() -> dict:
                 "id": name,
                 "name": CHECKPOINT_NAMES.get(name, Path(name).stem),
                 **card_fields(cards, "checkpoints", name),
+                **base_fields("checkpoints", name),
             }
             for name in checkpoints
+        ] + [
+            {**item, **card_fields(cards, "checkpoints", item["id"])}
+            for item in unet_options({name for name in checkpoints if isinstance(name, str)})
         ],
         "loras": [
             {
@@ -879,12 +1157,15 @@ def list_options() -> dict:
                 "triggers": LORA_CATALOG.get(name, {}).get("triggers", []),
                 "shared": LORA_CATALOG.get(name, {}).get("shared", []),
                 "outfits": LORA_CATALOG.get(name, {}).get("outfits", []),
+                **base_fields("loras", name),
             }
             for name in loras
         ],
         "ratios": RATIOS,
         "output_dir": str(OUTPUT_DIR),
         "extra_words": read_extra_words(),
+        "base_groups": [{"id": key, "label": BASE_LABELS[key]} for key in BASE_ORDER],
+        "flux_defaults": {"steps": FLUX_DEFAULT_STEPS, "guidance": FLUX_DEFAULT_GUIDANCE},
     }
 
 
@@ -1053,6 +1334,51 @@ def read_seed(body: dict, *, fresh: bool) -> int:
     return seed
 
 
+def fitting_loras(loras: list[tuple[str, float]], checkpoint_base: str, lora_bases: dict) -> list[tuple[str, float]]:
+    return [item for item in loras if lora_fits(checkpoint_base, lora_bases.get(item[0], "unknown"))]
+
+
+def skipped_loras(loras: list[tuple[str, float]], checkpoint_base: str, lora_bases: dict) -> list[str]:
+    return [item[0] for item in loras if not lora_fits(checkpoint_base, lora_bases.get(item[0], "unknown"))]
+
+
+def flux_tuning(body: dict) -> dict:
+    """FLUX のときだけ使う設定。指定がなければ steps 20、guidance 3.5。"""
+    try:
+        steps = int(body.get("steps") or FLUX_DEFAULT_STEPS)
+        guidance = float(body.get("guidance") if body.get("guidance") not in (None, "") else FLUX_DEFAULT_GUIDANCE)
+    except (TypeError, ValueError) as error:
+        raise ValueError("FLUX のステップ数とガイダンスを確認してください。") from error
+    if not 1 <= steps <= 60:
+        raise ValueError("FLUX のステップ数は 1 から 60 にしてください。")
+    if not 0 <= guidance <= 10:
+        raise ValueError("FLUX のガイダンスは 0 から 10 にしてください。")
+    return {"steps": steps, "guidance": guidance}
+
+
+def flux2_tuning(body: dict, entry: dict) -> dict:
+    """FLUX.2 Klein の設定。既定は公式ワークフロー（蒸留版 4 ステップ / cfg 1、base 版 20 ステップ / cfg 5）。"""
+    preset = FLUX2_DISTILLED if entry.get("distilled", True) else FLUX2_BASE
+    try:
+        steps = int(body.get("steps") or preset["steps"])
+        cfg = float(body.get("cfg") if body.get("cfg") not in (None, "") else preset["cfg"])
+    except (TypeError, ValueError) as error:
+        raise ValueError("FLUX.2 のステップ数と cfg を確認してください。") from error
+    if not 1 <= steps <= 60:
+        raise ValueError("FLUX.2 のステップ数は 1 から 60 にしてください。")
+    if not 1 <= cfg <= 10:
+        raise ValueError("FLUX.2 の cfg は 1 から 10 にしてください。")
+    return {
+        "steps": steps,
+        "cfg": cfg,
+        "unet": {
+            "text_encoder": entry["text_encoder"],
+            "vae": entry["vae"],
+            "distilled": bool(entry.get("distilled", True)),
+        },
+    }
+
+
 def generation_inputs(body: dict, mode: str) -> dict:
     options = list_options()
     if not options["ready"]:
@@ -1063,6 +1389,15 @@ def generation_inputs(body: dict, mode: str) -> dict:
     checkpoint = str(body.get("checkpoint") or "")
     if checkpoint not in checkpoint_ids:
         raise ValueError("基礎モデルを選んでください。")
+    checkpoint_base = next(
+        (item.get("base", "unknown") for item in options["checkpoints"] if item["id"] == checkpoint),
+        "unknown",
+    )
+    lora_bases = {item["id"]: item.get("base", "unknown") for item in options["loras"]}
+    tuning = flux_tuning(body) if checkpoint_base == "flux" else {}
+    if checkpoint_base == "flux2":
+        entry = next(item for item in options["checkpoints"] if item["id"] == checkpoint)
+        tuning = flux2_tuning(body, entry)
 
     prompt = str(body.get("prompt") or "").strip()
     if not prompt:
@@ -1083,7 +1418,10 @@ def generation_inputs(body: dict, mode: str) -> dict:
         draw_width, draw_height = sampling_size(width, height)
         return {
             "checkpoint": checkpoint,
-            "loras": selected_loras(body, lora_ids),
+            "base": checkpoint_base,
+            "skipped_loras": skipped_loras(selected_loras(body, lora_ids), checkpoint_base, lora_bases),
+            **tuning,
+            "loras": fitting_loras(selected_loras(body, lora_ids), checkpoint_base, lora_bases),
             "prompt": prompt,
             "negative": negative,
             "seed": read_seed(body, fresh=False),
@@ -1104,7 +1442,10 @@ def generation_inputs(body: dict, mode: str) -> dict:
         ensure_memory(width, height, VARY_COUNT)
         return {
             "checkpoint": checkpoint,
-            "loras": selected_loras(body, lora_ids),
+            "base": checkpoint_base,
+            "skipped_loras": skipped_loras(selected_loras(body, lora_ids), checkpoint_base, lora_bases),
+            **tuning,
+            "loras": fitting_loras(selected_loras(body, lora_ids), checkpoint_base, lora_bases),
             "prompt": prompt,
             "negative": negative,
             "seed": read_seed(body, fresh=True),
@@ -1131,7 +1472,10 @@ def generation_inputs(body: dict, mode: str) -> dict:
     expanded_negative = f"{negative}{EXPAND_NEGATIVE_SUFFIX}".strip()[:4000]
     return {
         "checkpoint": checkpoint,
-        "loras": selected_loras(body, lora_ids),
+        "base": checkpoint_base,
+        "skipped_loras": skipped_loras(selected_loras(body, lora_ids), checkpoint_base, lora_bases),
+        **tuning,
+        "loras": fitting_loras(selected_loras(body, lora_ids), checkpoint_base, lora_bases),
         "prompt": expanded_prompt,
         "negative": expanded_negative,
         "seed": read_seed(body, fresh=True),
@@ -1146,12 +1490,29 @@ def generation_inputs(body: dict, mode: str) -> dict:
     }
 
 
-def model_nodes(checkpoint: str, loras: list[tuple[str, float]]) -> tuple[dict[str, dict], list]:
-    graph: dict[str, dict] = {
-        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": checkpoint}},
-    }
+def model_nodes(
+    checkpoint: str,
+    loras: list[tuple[str, float]],
+    base: str = "sdxl",
+    unet: dict | None = None,
+) -> tuple[dict[str, dict], list]:
+    if base == "flux2" and unet:
+        # 分離構成: 拡散モデル（1）、テキストエンコーダー（26）、VAE（27）。
+        graph: dict[str, dict] = {
+            "1": {"class_type": "UNETLoader", "inputs": {"unet_name": checkpoint, "weight_dtype": "default"}},
+            "26": {
+                "class_type": "CLIPLoader",
+                "inputs": {"clip_name": unet["text_encoder"], "type": "flux2", "device": "default"},
+            },
+            "27": {"class_type": "VAELoader", "inputs": {"vae_name": unet["vae"]}},
+        }
+        clip_ref = ["26", 0]
+    else:
+        graph = {
+            "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": checkpoint}},
+        }
+        clip_ref = ["1", 1]
     model_ref = ["1", 0]
-    clip_ref = ["1", 1]
     for index, (lora_id, strength) in enumerate(loras):
         node_id = str(20 + index)
         graph[node_id] = {
@@ -1166,6 +1527,9 @@ def model_nodes(checkpoint: str, loras: list[tuple[str, float]]) -> tuple[dict[s
         }
         model_ref = [node_id, 0]
         clip_ref = [node_id, 1]
+    if base in {"flux", "flux2"}:
+        # FLUX は CLIPSetLastLayer を使わない。プロンプトは最後の CLIP から直接作る（prompt_clip）。
+        return graph, model_ref
     graph["3"] = {
         "class_type": "CLIPSetLastLayer",
         "inputs": {"clip": clip_ref, "stop_at_clip_layer": -2},
@@ -1173,18 +1537,116 @@ def model_nodes(checkpoint: str, loras: list[tuple[str, float]]) -> tuple[dict[s
     return graph, model_ref
 
 
-def add_prompts(graph: dict[str, dict], prompt: str, negative: str) -> None:
+def prompt_clip(graph: dict[str, dict]) -> list:
+    """SDXL などは CLIPSetLastLayer（3番）、FLUX は最後の LoRA か、チェックポイントの CLIP。"""
+    if "3" in graph:
+        return ["3", 0]
+    lora_nodes = [int(key) for key, node in graph.items() if node.get("class_type") == "LoraLoader"]
+    if lora_nodes:
+        return [str(max(lora_nodes)), 1]
+    if "26" in graph:
+        return ["26", 0]
+    return ["1", 1]
+
+
+def vae_ref(graph: dict[str, dict]) -> list:
+    """チェックポイントなら付属の VAE（1番の 2）、分離構成なら VAELoader（27番）。"""
+    return ["27", 0] if "27" in graph else ["1", 2]
+
+
+def add_prompts(graph: dict[str, dict], prompt: str, negative: str, base: str = "sdxl", distilled: bool = True) -> None:
+    clip = prompt_clip(graph)
     graph["4"] = {
         "class_type": "CLIPTextEncode",
-        "inputs": {"text": prompt, "clip": ["3", 0]},
+        "inputs": {"text": prompt, "clip": clip},
     }
+    if base == "flux2" and distilled:
+        # FLUX.2 Klein 蒸留版の公式ワークフローどおり、ネガティブは ConditioningZeroOut。
+        graph["5"] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["4", 0]}}
+        return
     graph["5"] = {
         "class_type": "CLIPTextEncode",
-        "inputs": {"text": negative, "clip": ["3", 0]},
+        # FLUX はネガティブを使わない（cfg 1.0）。公式の例どおり空にする。
+        "inputs": {"text": "" if base == "flux" else negative, "clip": clip},
     }
 
 
-def add_sampler(graph: dict[str, dict], model_ref: list, seed: int, latent_ref: list, denoise: float) -> None:
+def sampler_size(spec: dict) -> tuple[int, int]:
+    layout = spec.get("layout") or {}
+    width = spec.get("draw_width") or layout.get("draw_w") or spec.get("width") or 1024
+    height = spec.get("draw_height") or layout.get("draw_h") or spec.get("height") or 1024
+    return int(width), int(height)
+
+
+def add_sampler(
+    graph: dict[str, dict],
+    model_ref: list,
+    seed: int,
+    latent_ref: list,
+    denoise: float,
+    spec: dict | None = None,
+) -> None:
+    if spec and spec.get("base") == "flux2":
+        width, height = sampler_size(spec)
+        graph["28"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}}
+        graph["29"] = {
+            "class_type": "Flux2Scheduler",
+            "inputs": {"steps": spec.get("steps", FLUX2_DISTILLED["steps"]), "width": width, "height": height},
+        }
+        sigmas = ["29", 0]
+        if denoise < 1:
+            graph["30"] = {"class_type": "SplitSigmasDenoise", "inputs": {"sigmas": ["29", 0], "denoise": denoise}}
+            sigmas = ["30", 1]
+        graph["31"] = {
+            "class_type": "CFGGuider",
+            "inputs": {
+                "model": model_ref,
+                "positive": ["4", 0],
+                "negative": ["5", 0],
+                "cfg": spec.get("cfg", FLUX2_DISTILLED["cfg"]),
+            },
+        }
+        graph["32"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}}
+        graph["7"] = {
+            "class_type": "SamplerCustomAdvanced",
+            "inputs": {
+                "noise": ["32", 0],
+                "guider": ["31", 0],
+                "sampler": ["28", 0],
+                "sigmas": sigmas,
+                "latent_image": latent_ref,
+            },
+        }
+        graph["8"] = {
+            "class_type": "VAEDecode",
+            "inputs": {"samples": ["7", 0], "vae": vae_ref(graph)},
+        }
+        return
+    if spec and spec.get("base") == "flux":
+        graph["25"] = {
+            "class_type": "FluxGuidance",
+            "inputs": {"conditioning": ["4", 0], "guidance": spec.get("guidance", FLUX_DEFAULT_GUIDANCE)},
+        }
+        graph["7"] = {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": model_ref,
+                "seed": seed,
+                "steps": spec.get("steps", FLUX_DEFAULT_STEPS),
+                "cfg": 1.0,
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "positive": ["25", 0],
+                "negative": ["5", 0],
+                "latent_image": latent_ref,
+                "denoise": denoise,
+            },
+        }
+        graph["8"] = {
+            "class_type": "VAEDecode",
+            "inputs": {"samples": ["7", 0], "vae": vae_ref(graph)},
+        }
+        return
     graph["7"] = {
         "class_type": "KSampler",
         "inputs": {
@@ -1202,7 +1664,7 @@ def add_sampler(graph: dict[str, dict], model_ref: list, seed: int, latent_ref: 
     }
     graph["8"] = {
         "class_type": "VAEDecode",
-        "inputs": {"samples": ["7", 0], "vae": ["1", 2]},
+        "inputs": {"samples": ["7", 0], "vae": vae_ref(graph)},
     }
 
 
@@ -1236,17 +1698,17 @@ def add_save(
 
 
 def build_create(spec: dict, prefix: str) -> dict:
-    graph, model_ref = model_nodes(spec["checkpoint"], spec["loras"])
-    add_prompts(graph, spec["prompt"], spec["negative"])
+    graph, model_ref = model_nodes(spec["checkpoint"], spec["loras"], spec.get("base", "sdxl"), spec.get("unet"))
+    add_prompts(graph, spec["prompt"], spec["negative"], spec.get("base", "sdxl"), (spec.get("unet") or {}).get("distilled", True))
     graph["6"] = {
-        "class_type": "EmptyLatentImage",
+        "class_type": {"flux": "EmptySD3LatentImage", "flux2": "EmptyFlux2LatentImage"}.get(spec.get("base"), "EmptyLatentImage"),
         "inputs": {
             "width": spec["draw_width"],
             "height": spec["draw_height"],
             "batch_size": spec["count"],
         },
     }
-    add_sampler(graph, model_ref, spec["seed"], ["6", 0], 1)
+    add_sampler(graph, model_ref, spec["seed"], ["6", 0], 1, spec)
     add_save(
         graph,
         ["8", 0],
@@ -1258,8 +1720,8 @@ def build_create(spec: dict, prefix: str) -> dict:
 
 
 def build_vary(spec: dict, prefix: str) -> dict:
-    graph, model_ref = model_nodes(spec["checkpoint"], spec["loras"])
-    add_prompts(graph, spec["prompt"], spec["negative"])
+    graph, model_ref = model_nodes(spec["checkpoint"], spec["loras"], spec.get("base", "sdxl"), spec.get("unet"))
+    add_prompts(graph, spec["prompt"], spec["negative"], spec.get("base", "sdxl"), (spec.get("unet") or {}).get("distilled", True))
     graph["11"] = {
         "class_type": "LoadImageOutput",
         "inputs": {"image": spec["source"]},
@@ -1269,13 +1731,13 @@ def build_vary(spec: dict, prefix: str) -> dict:
         image_ref = add_scale(graph, image_ref, spec["draw_width"], spec["draw_height"], "13")
     graph["12"] = {
         "class_type": "VAEEncode",
-        "inputs": {"pixels": image_ref, "vae": ["1", 2]},
+        "inputs": {"pixels": image_ref, "vae": vae_ref(graph)},
     }
     graph["14"] = {
         "class_type": "RepeatLatentBatch",
         "inputs": {"samples": ["12", 0], "amount": spec["count"]},
     }
-    add_sampler(graph, model_ref, spec["seed"], ["14", 0], spec["denoise"])
+    add_sampler(graph, model_ref, spec["seed"], ["14", 0], spec["denoise"], spec)
     add_save(
         graph,
         ["8", 0],
@@ -1318,8 +1780,8 @@ def write_expand_context(source: Path, layout: dict[str, int]) -> str:
 
 def build_expand(spec: dict, prefix: str) -> dict:
     layout = spec["layout"]
-    graph, model_ref = model_nodes(spec["checkpoint"], spec["loras"])
-    add_prompts(graph, spec["prompt"], spec["negative"])
+    graph, model_ref = model_nodes(spec["checkpoint"], spec["loras"], spec.get("base", "sdxl"), spec.get("unet"))
+    add_prompts(graph, spec["prompt"], spec["negative"], spec.get("base", "sdxl"), (spec.get("unet") or {}).get("distilled", True))
     graph["11"] = {
         "class_type": "LoadImageOutput",
         "inputs": {"image": spec["source"]},
@@ -1345,14 +1807,14 @@ def build_expand(spec: dict, prefix: str) -> dict:
     }
     graph["12"] = {
         "class_type": "VAEEncode",
-        "inputs": {"pixels": ["24", 0], "vae": ["1", 2]},
+        "inputs": {"pixels": ["24", 0], "vae": vae_ref(graph)},
     }
     graph["19"] = {
         "class_type": "SetLatentNoiseMask",
         "inputs": {"samples": ["12", 0], "mask": ["15", 1]},
     }
     # 強く描き直すと、余白に別の飾りを足して境目が切れる。弱く整えるだけにする。
-    add_sampler(graph, model_ref, spec["seed"], ["19", 0], 0.45)
+    add_sampler(graph, model_ref, spec["seed"], ["19", 0], 0.45, spec)
     painted = ["8", 0]
     if (layout["draw_w"], layout["draw_h"]) != (layout["out_w"], layout["out_h"]):
         painted = add_scale(graph, painted, layout["out_w"], layout["out_h"], "10")
@@ -1400,7 +1862,7 @@ def build_expand(spec: dict, prefix: str) -> dict:
     return graph
 
 
-def build_graph(body: dict, prefix: str = "studio") -> tuple[dict, int, tuple[int, int]]:
+def build_graph(body: dict, prefix: str = "studio", extras: dict | None = None) -> tuple[dict, int, tuple[int, int]]:
     mode = str(body.get("mode") or "create")
     if mode not in {"create", "vary", "expand"}:
         raise ValueError("操作を確認してください。")
@@ -1411,6 +1873,16 @@ def build_graph(body: dict, prefix: str = "studio") -> tuple[dict, int, tuple[in
         graph = build_expand(spec, prefix)
     else:
         graph = build_create(spec, prefix)
+    if extras is not None:
+        extras["base"] = spec.get("base", "unknown")
+        if spec.get("skipped_loras"):
+            extras["skipped_loras"] = spec["skipped_loras"]
+        if spec.get("base") == "flux":
+            extras["steps"] = spec.get("steps", FLUX_DEFAULT_STEPS)
+            extras["guidance"] = spec.get("guidance", FLUX_DEFAULT_GUIDANCE)
+        if spec.get("base") == "flux2":
+            extras["steps"] = spec.get("steps")
+            extras["cfg"] = spec.get("cfg")
     return graph, spec["seed"], (spec["out_width"], spec["out_height"])
 
 
@@ -1826,7 +2298,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return
         try:
             prefix = "muse/studio" if for_muse else "studio"
-            graph, seed, size = build_graph(body, prefix)
+            extras: dict = {}
+            graph, seed, size = build_graph(body, prefix, extras)
             result = comfy_json("POST", "/prompt", {"prompt": graph, "client_id": CLIENT_ID})
         except ValueError as error:
             if token:
@@ -1846,7 +2319,7 @@ class StudioHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "ワークフローを開始できませんでした。"}, status=502)
             return
         remember_job(prompt_id, seed, "muse" if for_muse else "studio", token)
-        payload = {"prompt_id": prompt_id, "seed": seed, "width": size[0], "height": size[1]}
+        payload = {"prompt_id": prompt_id, "seed": seed, "width": size[0], "height": size[1], **extras}
         if for_muse:
             payload["status_url"] = f"/api/agent/jobs/{prompt_id}"
         self.send_json(payload)

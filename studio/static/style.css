@@ -1010,3 +1010,190 @@ figcaption {
   #detail-prev { left: 8px; }
   #detail-next { right: 8px; }
 }
+
+/* ---- ベースモデルごとの見出しとバッジ ---- */
+/* 見出しを入れても行がつぶれないよう、行の高さは中身（カードの縦横比）に合わせる。 */
+#picker-grid { grid-auto-rows: max-content; }
+.picker-group {
+  grid-column: 1 / -1;
+  margin: 10px 0 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+.picker-group:first-child { margin-top: 0; }
+.picker-group small {
+  margin-left: 8px;
+  color: var(--muted);
+  font-weight: normal;
+  letter-spacing: 0;
+}
+.base-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  vertical-align: middle;
+}
+.tile-hit .base-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  margin: 0;
+}
+.base-flux { background: #0f8b6c; }
+.base-flux2 { background: #c2410c; }
+.base-sdxl { background: #5a4fd1; }
+.base-sd15 { background: #b06a12; }
+.base-sd2 { background: #8a5a2b; }
+.base-sd3 { background: #2d7fb8; }
+.base-unknown { background: #59606f; }
+.model-tile.is-disabled { opacity: 0.38; }
+.model-tile.is-disabled .tile-hit { cursor: not-allowed; }
+.lora-card.is-unfit { outline: 2px dashed #d9822b; outline-offset: -2px; }
+.lora-unfit {
+  margin: 6px 10px;
+  color: #f0a35e;
+  font-size: 12px;
+}
+
+/* ---- 2026-11-16e: スマホでピッカーが下で見切れ・上に隙間・スクロール不可の修正 ---- */
+@media (max-width: 800px) {
+  dialog#picker[open] {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    padding: 0;
+    place-items: stretch;
+    overflow: hidden;
+  }
+  #picker .picker-panel {
+    width: 100%;
+    height: 100%;
+    max-height: 100dvh;
+    padding: calc(12px + env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom));
+  }
+  #picker .picker-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    flex: none;
+    background: #171a22;
+  }
+  #picker-grid {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+  }
+}
+
+/* ---- 2026-11-16f: スマホでプロンプト入力時に画面が飛ぶ問題の修正 ---- */
+@media (max-width: 800px) {
+  #prompt, textarea, select, input { font-size: 16px; }
+  body.sheet-open #composer {
+    height: min(78vh, var(--vvh, 78vh));
+    max-height: var(--vvh, 78vh);
+  }
+  body.sheet-open.kb-open #composer {
+    top: var(--vvtop, 0px);
+    bottom: auto;
+    height: var(--vvh, 100%);
+    max-height: var(--vvh, 100%);
+    border-radius: 0;
+    padding-bottom: 8px;
+  }
+  body.sheet-open.kb-open #prompt { min-height: 72px; max-height: 30vh; }
+}
+
+/* ---- 2026-11-16g: スマホの画像詳細で条件パネルに届かない問題の修正 ---- */
+@media (max-width: 800px) {
+  dialog#detail[open] {
+    position: fixed;
+    inset: 0;
+    top: var(--vvtop, 0px);
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    height: var(--vvh, 100dvh);
+    padding: 0;
+    place-items: stretch;
+    overflow: hidden;
+  }
+  dialog#detail .detail-layout,
+  dialog#detail.landscape .detail-layout {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    border-radius: 0;
+  }
+  dialog#detail .detail-stage {
+    flex: none;
+    width: 100%;
+    height: auto;
+    min-height: 100%;
+  }
+  dialog#detail #detail-image,
+  dialog#detail.landscape #detail-image {
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: calc(var(--vvh, 100dvh) - 72px);
+  }
+  dialog#detail .detail-toolbar {
+    left: 50%;
+    right: auto;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+  }
+  dialog#detail #detail-info {
+    width: auto;
+    min-width: 88px;
+    height: 44px;
+    padding: 0 16px;
+    font-family: inherit;
+    font-style: normal;
+    font-size: 0;
+    font-weight: 700;
+  }
+  dialog#detail #detail-info::after {
+    content: "詳細";
+    font-size: 15px;
+    letter-spacing: 0.06em;
+  }
+  dialog#detail #detail-info-layer,
+  dialog#detail.info-open #detail-info-layer {
+    display: block;
+    position: static;
+    inset: auto;
+    z-index: auto;
+  }
+  dialog#detail #detail-info-scrim,
+  dialog#detail.info-open #detail-info-scrim { display: none; }
+  dialog#detail .detail-side,
+  dialog#detail.info-open .detail-side {
+    position: static;
+    z-index: auto;
+    max-height: none;
+    margin: 0;
+    overflow: visible;
+    border-radius: 0;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+    background: #1b1f2a;
+  }
+  dialog#detail #detail-close { display: none; }
+}

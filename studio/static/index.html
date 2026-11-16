@@ -29,13 +29,19 @@
       <div id="checkpoint-current"></div>
     </section>
 
+    <section id="flux-settings" hidden>
+      <label class="label" for="flux-guidance">FLUX ガイダンス</label>
+      <input id="flux-guidance" class="count-input" type="number" min="0" max="10" step="0.1" value="3.5" inputmode="decimal">
+      <p class="hint">FLUX のときだけ使います（cfg 1.0、euler / simple、20 ステップ）。標準は 3.5 です。上げるとプロンプトに忠実に、下げると自然な写りになります。</p>
+    </section>
+
     <section>
       <div class="section-head">
         <span class="label">LoRA</span>
         <button id="lora-add" type="button">追加する</button>
       </div>
       <div id="lora-stack"></div>
-      <p class="hint">追加するを押すと、サムネイルの一覧が出ます。同時に 5 つまでです。カーソルを合わせると、画像を入れるボタンと、URLがあるときは詳細が出ます。</p>
+      <p class="hint">追加するを押すと、ベースモデルごとに分かれたサムネイルの一覧が出ます。今の基礎モデルに合わない LoRA は選べません。同時に 5 つまでです。カーソルを合わせると、画像を入れるボタンと、URLがあるときは詳細が出ます。</p>
     </section>
 
     <section>
@@ -74,6 +80,7 @@
     </details>
     <details id="negative-block">
       <summary>避けたい内容（任意）</summary>
+      <p id="negative-flux-note" class="hint" hidden>FLUX ではこの欄は使われません。</p>
       <textarea id="negative" rows="3">worst quality, low quality, bad anatomy, bad hands, missing fingers, extra digits, text, watermark, blurry</textarea>
     </details>
   </div>
