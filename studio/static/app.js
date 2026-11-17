@@ -802,7 +802,7 @@ function startJob(payload, settings) {
     statusLine.classList.add("error");
     statusLine.textContent = "待ちは 10 件までです。描き終わるまで、追加は待ってください。";
     renderQueue();
-    return;
+    return false;
   }
   const entry = {
     settings,
@@ -828,6 +828,7 @@ function startJob(payload, settings) {
   renderQueue();
   if (payload.mode !== "create") setSheet(false);
   sendJob(entry, payload);
+  return true;
 }
 
 async function sendJob(entry, payload) {
@@ -865,7 +866,7 @@ form.addEventListener("submit", async (event) => {
   reuseSeed = null;
   const settings = currentSettings(seed);
   settings.kindLabel = "テキストから画像";
-  await startJob({
+  const started = startJob({
     mode: "create",
     checkpoint: settings.checkpoint,
     loras: settings.loras.map((item) => ({ id: item.id, strength: item.strength })),
@@ -878,6 +879,9 @@ form.addEventListener("submit", async (event) => {
     seed,
     ...(settings.base === "flux" ? { guidance: settings.guidance } : {}),
   }, settings);
+  if (!started) return;
+  promptBox.value = "";
+  paintTriggers();
 });
 
 function ensurePoller() {
