@@ -693,8 +693,88 @@ def matches_hint(tags: list[str], hints: list[str]) -> bool:
     return any(hint and hint in blob for hint in hints)
 
 
-def build_random_prompt(current: str, hints: list | None = None) -> dict:
-    lists = recent_prompt_tags()
+_PRIVATE_LORA_TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9]+$")
+_private_word_cache: dict = {"at": 0.0, "owners": {}}
+
+
+def private_lora_token(text: str) -> bool:
+    word = text.strip()
+    if "\\" in word or _PRIVATE_LORA_TOKEN.fullmatch(word):
+        return True
+    return bool(re.fullmatch(r"[a-z0-9]{16,}", word))
+
+
+def add_private_word(owners: dict[str, set[str]], lora_id: str, text: str) -> None:
+    key = tag_key(text)
+    if key:
+        owners.setdefault(key, set()).add(lora_id)
+
+
+def private_word_owners() -> dict[str, set[str]]:
+    """LoRA を足したときだけ意味がある言葉。普通の髪や衣装の言葉は含めません。"""
+    now = time.time()
+    if now - _private_word_cache["at"] < 30:
+        return _private_word_cache["owners"]
+    owners: dict[str, set[str]] = {}
+    for lora_id, catalog in LORA_CATALOG.items():
+        for text in catalog.get("triggers") or []:
+            add_private_word(owners, lora_id, str(text))
+        for outfit in catalog.get("outfits") or []:
+            if not isinstance(outfit, dict):
+                continue
+            for text in outfit.get("triggers") or []:
+                if private_lora_token(str(text)):
+                    add_private_word(owners, lora_id, str(text))
+    for folder in model_folders("loras"):
+        if not folder.is_dir():
+            continue
+        for path in folder.glob("*.safetensors"):
+            if path.name in LORA_CATALOG:
+                continue
+            header = read_safetensors_header(path)
+            meta = header.get("__metadata__") if isinstance(header, dict) else None
+            trigger = meta.get("atelier_trigger") if isinstance(meta, dict) else ""
+            if trigger:
+                add_private_word(owners, path.name, str(trigger))
+    _private_word_cache["at"] = now
+    _private_word_cache["owners"] = owners
+    return owners
+
+
+def active_lora_ids(raw: object) -> set[str]:
+    if not isinstance(raw, list):
+        return set()
+    found: set[str] = set()
+    for item in raw:
+        name = item if isinstance(item, str) else ""
+        if isinstance(item, dict):
+            name = str(item.get("id") or "")
+        name = str(name).strip()
+        if name and Path(name).name == name and len(name) <= 180:
+            found.add(name)
+        if len(found) >= 8:
+            break
+    return found
+
+
+def without_inactive_lora_words(tags: list[str], active: set[str], owners: dict[str, set[str]]) -> list[str]:
+    kept = []
+    for tag in tags:
+        needed = owners.get(tag_key(tag))
+        if needed and not (needed & active):
+            continue
+        kept.append(tag)
+    return kept
+
+
+def build_random_prompt(current: str, hints: list | None = None, loras: list | None = None) -> dict:
+    active = active_lora_ids(loras)
+    owners = private_word_owners()
+    lists = []
+    for tags in recent_prompt_tags():
+        kept = without_inactive_lora_words(tags, active, owners)
+        if kept:
+            lists.append(kept)
     clean_hints = []
     for hint in hints or []:
         if isinstance(hint, str):
@@ -708,7 +788,11 @@ def build_random_prompt(current: str, hints: list | None = None) -> dict:
         if len(matched) >= 4:
             lists = matched
     picture_count = len(lists)
-    current_tags = split_tags(strip_expand_suffix(str(current or "")))
+    current_tags = without_inactive_lora_words(
+        split_tags(strip_expand_suffix(str(current or ""))),
+        active,
+        owners,
+    )
     if current_tags:
         lists = [current_tags, *lists]
     if not lists:
@@ -2384,10 +2468,11 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return
             current = body.get("prompt") or ""
             hints = body.get("hints") or []
-            if not isinstance(current, str) or not isinstance(hints, list):
+            loras = body.get("loras") or []
+            if not isinstance(current, str) or not isinstance(hints, list) or not isinstance(loras, list):
                 self.send_json({"error": "文章を読めませんでした。"}, status=400)
                 return
-            self.send_json(build_random_prompt(current[:4000], hints))
+            self.send_json(build_random_prompt(current[:4000], hints, loras))
             return
         if path == "/api/model-card":
             fields = self.read_model_card()

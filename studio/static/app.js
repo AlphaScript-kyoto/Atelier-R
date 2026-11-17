@@ -933,7 +933,14 @@ randomButton.addEventListener("click", async () => {
     const response = await fetch("/api/random-prompt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: promptBox.value, hints: characterHints() }),
+      body: JSON.stringify({
+        prompt: promptBox.value,
+        hints: characterHints(),
+        loras: selectedLoras.filter((item) => {
+          const info = loraById(item.id);
+          return !info || loraFits(info);
+        }).map((item) => item.id),
+      }),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "プロンプトを組めませんでした。");
