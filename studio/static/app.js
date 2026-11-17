@@ -1200,6 +1200,7 @@ function fact(label, value) {
 
 const detailPrev = document.querySelector("#detail-prev");
 const detailNext = document.querySelector("#detail-next");
+const detailIndexLabel = document.querySelector("#detail-index");
 let detailFigures = [];
 let detailIndex = 0;
 
@@ -1270,6 +1271,8 @@ function showDetail() {
   const multiple = figures.length > 1;
   detailPrev.hidden = !multiple;
   detailNext.hidden = !multiple;
+  detailIndexLabel.textContent = `${detailIndex + 1}/${figures.length}`;
+  detailIndexLabel.setAttribute("aria-label", `${figures.length}枚中の${detailIndex + 1}枚目`);
   detail.classList.toggle("landscape", Number(settings.width) > Number(settings.height));
   detailImage.src = image.url;
   const facts = [

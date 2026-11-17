@@ -759,6 +759,7 @@ dialog.landscape .detail-layout {
   min-width: 0;
   background: #0c0e13;
 }
+.detail-index { display: none; }
 .detail-nav, #detail-prev, #detail-next {
   position: absolute;
   top: 50%;
@@ -1090,6 +1091,25 @@ figcaption {
     max-height: 100dvh;
   }
   #detail-back, .detail-toolbar { display: grid; }
+  dialog#detail .detail-index {
+    display: block;
+    position: absolute;
+    top: calc(12px + env(safe-area-inset-top));
+    left: 50%;
+    z-index: 2;
+    height: 40px;
+    margin: 0;
+    padding: 0 14px;
+    transform: translateX(-50%);
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.5);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 40px;
+    pointer-events: none;
+  }
   #detail-back {
     position: absolute;
     top: calc(12px + env(safe-area-inset-top));
@@ -1284,13 +1304,15 @@ figcaption {
     width: 100%;
     height: auto;
     min-height: 100%;
+    box-sizing: border-box;
+    padding-top: calc(56px + env(safe-area-inset-top));
   }
   dialog#detail #detail-image,
   dialog#detail.landscape #detail-image {
     width: auto;
     height: auto;
     max-width: 100%;
-    max-height: calc(var(--vvh, 100dvh) - 72px);
+    max-height: calc(var(--vvh, 100dvh) - 128px - env(safe-area-inset-top));
   }
   dialog#detail .detail-toolbar {
     left: 50%;
