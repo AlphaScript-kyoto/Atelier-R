@@ -1656,12 +1656,16 @@ function setupTraining() {
     }
   }
 
-  document.querySelector("#train-open").addEventListener("click", () => {
+  const trainOpen = document.querySelector("#train-open");
+  const setTrainOpen = (open) => trainOpen.setAttribute("aria-pressed", open ? "true" : "false");
+  trainOpen.addEventListener("click", () => {
     fillCheckpoints();
     paintGoal();
     dialog.showModal();
+    setTrainOpen(true);
     pollTrain();
   });
+  dialog.addEventListener("close", () => setTrainOpen(false));
   document.querySelector("#train-close").addEventListener("click", () => dialog.close());
   document.querySelector("#train-scrim").addEventListener("click", () => dialog.close());
   document.querySelectorAll(".train-goal .choice").forEach((button) => {

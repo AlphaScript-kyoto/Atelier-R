@@ -7,6 +7,14 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <nav id="tool-rail" aria-label="機能">
+    <button id="train-open" type="button" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="currentColor" d="M4 7.5 12 4l8 3.5-8 3.5-8-3.5Zm0 4.5 8 3.5 8-3.5v2L12 18l-8-3.5v-2Zm0 4.5 8 3.5 8-3.5v2L12 22.5 4 19v-2.5Z"/>
+      </svg>
+      <span>LoRA</span>
+    </button>
+  </nav>
   <div id="select-tools">
     <span id="select-count" hidden>0枚</span>
     <button id="delete-images" type="button" hidden>削除</button>
@@ -44,7 +52,6 @@
         <div class="section-head">
         <span class="label">LoRA</span>
         <span class="section-actions">
-          <button id="train-open" type="button">学習</button>
           <button id="lora-add" type="button">追加する</button>
         </span>
       </div>

@@ -20,7 +20,7 @@ body {
   height: 100vh;
   overflow: hidden;
   display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
+  grid-template-columns: 72px 360px minmax(0, 1fr);
   grid-template-rows: auto auto auto auto minmax(0, 1fr);
   background: var(--bg);
   color: var(--text);
@@ -39,8 +39,47 @@ body.scroll-lock {
 
 .sheet-head, #sheet-scrim, #detail-back, .detail-toolbar, #detail-info-scrim { display: none; }
 
-.side {
+#tool-rail {
   grid-column: 1;
+  grid-row: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px;
+  background: #0e1016;
+  border-right: 1px solid var(--line);
+}
+
+#train-open {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 56px;
+  min-height: 58px;
+  padding: 8px 2px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.1;
+  cursor: pointer;
+}
+
+#train-open svg { width: 22px; height: 22px; }
+
+#train-open:hover,
+#train-open[aria-pressed="true"] {
+  background: #2a2448;
+  color: #ffffff;
+}
+
+.side {
+  grid-column: 2;
   grid-row: 1 / -1;
   padding: 24px 20px 40px;
   background: var(--side);
@@ -255,7 +294,6 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 .switch-model,
 #lora-add,
-#train-open,
 #train-close,
 #picker-close {
   border: 0;
@@ -495,7 +533,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 #negative-block,
 .actions,
 .progress-wrap {
-  grid-column: 2;
+  grid-column: 3;
 }
 
 .prompt-block { padding: 28px clamp(20px, 4vw, 56px) 0; }
@@ -524,7 +562,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 body.queue-open main { padding-bottom: min(36vh, 320px); }
 
 main {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 5;
   padding: 8px clamp(20px, 4vw, 56px) 48px;
   overflow: auto;
@@ -893,13 +931,22 @@ figcaption {
     height: auto;
     min-height: 100vh;
     overflow: auto;
+    padding-left: 64px;
     padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+  #tool-rail {
+    position: fixed;
+    z-index: 26;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 64px;
   }
   main { padding: 16px 12px 24px; overflow: visible; }
   #composer {
     display: flex;
     position: fixed;
-    left: 0;
+    left: 64px;
     right: 0;
     bottom: 0;
     z-index: 25;
