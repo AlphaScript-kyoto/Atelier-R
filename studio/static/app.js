@@ -149,13 +149,70 @@ function shortLabel(text) {
   return text.length > 18 ? `${text.slice(0, 16)}...` : text;
 }
 
-function addTrigger(text) {
-  if (promptBox.value.includes(text)) {
-    paintTriggers();
-    return;
+function uniqueWords(words) {
+  const unique = [];
+  const seen = new Set();
+  (Array.isArray(words) ? words : []).forEach((text) => {
+    const word = String(text || "").trim();
+    if (!word || seen.has(word)) return;
+    seen.add(word);
+    unique.push(word);
+  });
+  return unique;
+}
+
+function boundaryBefore(source, index) {
+  if (index === 0) return true;
+  let cursor = index - 1;
+  while (cursor >= 0 && source[cursor] === " ") cursor -= 1;
+  return cursor >= 0 && source[cursor] === ",";
+}
+
+function boundaryAfter(source, index) {
+  if (index === source.length) return true;
+  let cursor = index;
+  while (cursor < source.length && source[cursor] === " ") cursor += 1;
+  return cursor === source.length || source[cursor] === ",";
+}
+
+function findTag(source, word) {
+  let from = 0;
+  while (from <= source.length) {
+    const index = source.indexOf(word, from);
+    if (index < 0) return -1;
+    const end = index + word.length;
+    if (boundaryBefore(source, index) && boundaryAfter(source, end)) return index;
+    from = index + 1;
   }
-  const current = promptBox.value.trim();
-  promptBox.value = current ? `${current}, ${text}` : text;
+  return -1;
+}
+
+function wordInPrompt(source, word) {
+  return Boolean(word) && findTag(source, word) >= 0;
+}
+
+function removeTag(source, word) {
+  const index = findTag(source, word);
+  if (index < 0) return null;
+  const before = source.slice(0, index);
+  const after = source.slice(index + word.length);
+  if (/,\s*$/.test(before)) return `${before.replace(/,\s*$/, "")}${after}`;
+  if (/^\s*,\s*/.test(after)) return `${before}${after.replace(/^\s*,\s*/, "")}`;
+  return `${before}${after}`;
+}
+
+function removeWord(source, word) {
+  let current = source;
+  let next = removeTag(current, word);
+  while (next !== null) {
+    current = next;
+    next = removeTag(current, word);
+  }
+  return current.replace(/\s+,/g, ",").replace(/,\s*,/g, ",").replace(/^[\s,]+|[\s,]+$/g, "").replace(/,\s*/g, ", ");
+}
+
+function finishPrompt(value) {
+  promptBox.value = value;
   paintTriggers();
   if (window.matchMedia("(max-width: 800px)").matches) {
     promptBox.blur();
@@ -165,9 +222,44 @@ function addTrigger(text) {
   promptBox.focus();
 }
 
+function toggleTrigger(text) {
+  const word = String(text || "").trim();
+  if (!word) return;
+  const source = promptBox.value.trim();
+  if (wordInPrompt(source, word)) {
+    finishPrompt(removeWord(source, word));
+    return;
+  }
+  finishPrompt(source ? `${source}, ${word}` : word);
+}
+
+function toggleTriggerGroup(words) {
+  const unique = uniqueWords(words);
+  if (!unique.length) return;
+  const source = promptBox.value.trim();
+  const allIn = unique.every((word) => wordInPrompt(source, word));
+  if (allIn) {
+    const longestFirst = unique.slice().sort((left, right) => right.length - left.length);
+    finishPrompt(longestFirst.reduce((current, word) => removeWord(current, word), source));
+    return;
+  }
+  const missing = unique.filter((word) => !wordInPrompt(source, word));
+  finishPrompt(missing.reduce((current, word) => (current ? `${current}, ${word}` : word), source));
+}
+
 function paintTriggers() {
+  const source = promptBox.value;
   document.querySelectorAll(".lora-card .trigger, #extra-word-list .trigger").forEach((button) => {
-    button.setAttribute("aria-pressed", String(promptBox.value.includes(button.dataset.trigger)));
+    button.setAttribute("aria-pressed", String(wordInPrompt(source, button.dataset.trigger)));
+  });
+  document.querySelectorAll(".trigger-all").forEach((button) => {
+    let words = [];
+    try {
+      words = JSON.parse(button.dataset.words || "[]");
+    } catch (error) {
+      words = [];
+    }
+    button.setAttribute("aria-pressed", String(words.length > 0 && words.every((word) => wordInPrompt(source, word))));
   });
 }
 
@@ -184,7 +276,7 @@ function renderExtraWords(words) {
     button.dataset.trigger = text;
     button.title = text;
     button.textContent = `${shortLabel(text)} ↑`;
-    button.addEventListener("click", () => addTrigger(text));
+    button.addEventListener("click", () => toggleTrigger(text));
     list.appendChild(button);
   });
   paintTriggers();
@@ -402,7 +494,8 @@ function triggerSection(title, actionLabel, insertWords, chipWords) {
   action.type = "button";
   action.className = "trigger-all";
   action.textContent = actionLabel;
-  action.addEventListener("click", () => insertWords.forEach((text) => addTrigger(text)));
+  action.dataset.words = JSON.stringify(uniqueWords(insertWords));
+  action.addEventListener("click", () => toggleTriggerGroup(insertWords));
   head.append(label, action);
   const list = document.createElement("div");
   list.className = "trigger-list";
@@ -413,7 +506,7 @@ function triggerSection(title, actionLabel, insertWords, chipWords) {
     button.dataset.trigger = text;
     button.title = text;
     button.textContent = `${shortLabel(text)} ↑`;
-    button.addEventListener("click", () => addTrigger(text));
+    button.addEventListener("click", () => toggleTrigger(text));
     list.appendChild(button);
   });
   section.append(head, list);
