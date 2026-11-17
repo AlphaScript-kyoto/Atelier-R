@@ -1251,23 +1251,26 @@ document.querySelector("#detail-close").addEventListener("click", () => {
 document.querySelector("#detail-folder").addEventListener("click", openOutputFolder);
 
 const selectButton = document.querySelector("#select-images");
-const selectBar = document.querySelector("#select-bar");
 const selectCount = document.querySelector("#select-count");
 const deleteImagesButton = document.querySelector("#delete-images");
 const selectedFigures = new Set();
 
 function refreshSelectButton() {
-  selectButton.hidden = !gallery.querySelector("figure") || document.body.classList.contains("select-mode");
+  const selecting = document.body.classList.contains("select-mode");
+  selectButton.setAttribute("aria-pressed", String(selecting));
+  selectButton.textContent = selecting ? "やめる" : "選択";
+  selectCount.hidden = !selecting;
+  deleteImagesButton.hidden = !selecting;
 }
 
 function updateSelectBar() {
-  selectCount.textContent = `${selectedFigures.size}枚選択中`;
+  selectCount.textContent = `${selectedFigures.size}枚`;
   deleteImagesButton.disabled = selectedFigures.size === 0;
 }
 
 function setSelectMode(on) {
   document.body.classList.toggle("select-mode", Boolean(on));
-  selectBar.hidden = !on;
+  if (on && detail.open) detail.close();
   if (!on) {
     selectedFigures.clear();
     gallery.querySelectorAll("figure.is-selected").forEach((figure) => {
@@ -1304,8 +1307,6 @@ async function deleteFigures(figures) {
   const count = list.length;
   if (!window.confirm(`選んだ${count}枚を、保存フォルダからも消しますか？消した絵は元に戻せません。`)) return;
   deleteImagesButton.disabled = true;
-  const detailDelete = document.querySelector("#detail-delete");
-  detailDelete.disabled = true;
   try {
     const response = await fetch("/api/images/delete", {
       method: "POST",
@@ -1318,7 +1319,12 @@ async function deleteFigures(figures) {
       }),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || "絵を消せませんでした。");
+    if (!response.ok) {
+      const message = data.error || (response.status === 404
+        ? "削除の準備が古い画面のままです。黒い画面で Ctrl + C を押してから、もう一度起動してください。"
+        : "絵を消せませんでした。");
+      throw new Error(message);
+    }
     const gone = new Set([...(data.deleted || []), ...(data.missing || [])].map((item) => imageKey(item)));
     for (const figure of list) {
       if (!gone.has(imageKey(figure.entry.image))) continue;
@@ -1349,19 +1355,24 @@ async function deleteFigures(figures) {
     statusLine.classList.add("error");
     statusLine.textContent = error.message;
   } finally {
-    detailDelete.disabled = false;
     updateSelectBar();
     refreshSelectButton();
   }
 }
 
-selectButton.addEventListener("click", () => setSelectMode(true));
-document.querySelector("#select-done").addEventListener("click", () => setSelectMode(false));
-deleteImagesButton.addEventListener("click", () => deleteFigures(selectedFigures));
-document.querySelector("#detail-delete").addEventListener("click", () => {
-  const figure = detailFigures[detailIndex];
-  if (figure) deleteFigures([figure]);
+selectButton.addEventListener("click", () => {
+  const next = !document.body.classList.contains("select-mode");
+  if (next && !gallery.querySelector("figure")) {
+    statusLine.classList.add("error");
+    statusLine.textContent = "まだ消せません。この画面に出ている絵だけ選べます。";
+    return;
+  }
+  setSelectMode(next);
+  if (!next) return;
+  statusLine.classList.remove("error");
+  statusLine.textContent = "消したい絵を押してください。やめる で元の見方に戻ります。";
 });
+deleteImagesButton.addEventListener("click", () => deleteFigures(selectedFigures));
 const onThisPc = location.hostname === "127.0.0.1" || location.hostname === "localhost";
 if (!onThisPc) {
   openFolder.hidden = true;

@@ -7,6 +7,11 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <div id="select-tools">
+    <span id="select-count" hidden>0枚</span>
+    <button id="delete-images" type="button" hidden>削除</button>
+    <button id="select-images" type="button" aria-pressed="false">選択</button>
+  </div>
   <button id="sheet-scrim" type="button" aria-label="入力を閉じる"></button>
   <form id="composer">
     <div class="prompt-block">
@@ -96,12 +101,7 @@
 
   <main>
     <p id="status" class="status">準備を確認しています...</p>
-    <p class="save-note">生成した画像は自動で <code id="output-dir"></code> に保存されます。<button id="open-folder" type="button">フォルダを開く</button><button id="select-images" type="button" hidden>選んで削除</button></p>
-    <div id="select-bar" class="select-bar" hidden>
-      <span id="select-count">0枚選択中</span>
-      <button id="delete-images" type="button">削除する</button>
-      <button id="select-done" type="button">やめる</button>
-    </div>
+    <p class="save-note">生成した画像は自動で <code id="output-dir"></code> に保存されます。<button id="open-folder" type="button">フォルダを開く</button></p>
     <section id="gallery" class="gallery" aria-live="polite"></section>
   </main>
   <dialog id="detail">
@@ -135,7 +135,6 @@
           <p id="detail-prompt"></p>
           <button id="detail-rerun" type="button">同じ条件で再生成</button>
           <button id="detail-folder" type="button">保存フォルダを開く</button>
-          <button id="detail-delete" type="button">この絵を削除</button>
         </div>
       </div>
     </div>

@@ -625,7 +625,7 @@ details { color: var(--muted); }
   line-height: 1.6;
 }
 .save-note code { color: #d7def2; }
-#open-folder, #detail-folder, #detail-rerun, #select-images, #select-done {
+#open-folder, #detail-folder, #detail-rerun {
   border: 1px solid var(--line);
   border-radius: 999px;
   background: transparent;
@@ -633,35 +633,44 @@ details { color: var(--muted); }
   padding: 8px 14px;
   cursor: pointer;
 }
-#open-folder, #select-images { margin-left: 8px; }
-.select-bar[hidden] { display: none; }
-.select-bar {
+#open-folder { margin-left: 8px; }
+#select-tools {
+  position: fixed;
+  top: 18px;
+  right: clamp(20px, 4vw, 56px);
+  z-index: 30;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 8px;
-  position: sticky;
-  top: 8px;
-  z-index: 20;
-  max-width: 860px;
-  margin-top: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: rgba(23, 26, 34, 0.96);
 }
 #select-count { color: var(--text); font-size: 14px; font-weight: 700; }
-#delete-images, #detail-delete {
-  border: 0;
+#select-count[hidden], #delete-images[hidden] { display: none; }
+#select-images, #delete-images {
+  min-height: 44px;
   border-radius: 999px;
-  background: #8a3a44;
-  color: white;
-  padding: 8px 14px;
+  padding: 0 16px;
   font-weight: 700;
   cursor: pointer;
 }
-#detail-delete { display: block; width: 100%; margin-top: 8px; }
+#select-images {
+  border: 1px solid var(--line);
+  background: #1c2030;
+  color: var(--text);
+}
+#select-images[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+#delete-images {
+  border: 0;
+  background: #8a3a44;
+  color: white;
+}
 #delete-images:disabled { opacity: 0.55; cursor: wait; }
+@media (min-width: 801px) {
+  .prompt-block { padding-right: 168px; }
+}
 
 .gallery img { cursor: zoom-in; }
 
@@ -873,9 +882,12 @@ figcaption {
 .error { color: #ffb4b4; }
 
 @media (max-width: 800px) {
-  #select-images, #delete-images, #select-done, #detail-delete, .queue-cancel {
-    min-height: 44px;
+  #select-tools {
+    top: calc(8px + env(safe-area-inset-top));
+    right: 12px;
+    z-index: 20;
   }
+  .queue-cancel { min-height: 44px; }
   body {
     display: block;
     height: auto;
