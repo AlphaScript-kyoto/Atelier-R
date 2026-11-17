@@ -12,6 +12,7 @@ import json
 import mimetypes
 import os
 import random
+import re
 import secrets
 import socket
 import struct
@@ -1252,7 +1253,7 @@ def png_size(path: Path) -> tuple[int, int] | None:
     return width, height
 
 
-def output_image_file(source: object) -> tuple[Path, str]:
+def output_image_path(source: object) -> Path:
     if not isinstance(source, dict):
         raise ValueError("元の絵が見つかりません。一覧の絵をもう一度開いてください。")
     filename = str(source.get("filename") or "")
@@ -1268,9 +1269,14 @@ def output_image_file(source: object) -> tuple[Path, str]:
     root = OUTPUT_DIR.resolve()
     if path != root and root not in path.parents:
         raise ValueError("元の絵が見つかりません。一覧の絵をもう一度開いてください。")
+    return path
+
+
+def output_image_file(source: object) -> tuple[Path, str]:
+    path = output_image_path(source)
     if not path.is_file():
         raise ValueError("元の絵が見つかりません。一覧の絵をもう一度開いてください。")
-    relative = "/".join([*parts, filename])
+    relative = path.relative_to(OUTPUT_DIR.resolve()).as_posix()
     return path, f"{relative} [output]"
 
 
@@ -1999,6 +2005,83 @@ def cancel_studio_job(token: str) -> None:
         _jobs.pop(token, None)
 
 
+_PROMPT_ID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def queue_prompt_ids(queue: dict, bucket: str) -> set[str]:
+    found: set[str] = set()
+    for item in queue.get(bucket) or []:
+        if isinstance(item, (list, tuple)) and len(item) > 1:
+            found.add(str(item[1]))
+    return found
+
+
+def cancel_prompt(prompt_id: str) -> dict:
+    if not _PROMPT_ID.fullmatch(prompt_id):
+        raise ValueError("取り消す待ちが見つかりません。")
+    with _jobs_lock:
+        known = _jobs.get(prompt_id)
+    if not known or known.get("source") != "studio":
+        raise ValueError("取り消す待ちが見つかりません。")
+    try:
+        queue = comfy_json("GET", "/queue", timeout=10)
+    except RuntimeError as error:
+        raise ValueError("画像エンジンに接続できませんでした。") from error
+    if not isinstance(queue, dict):
+        raise ValueError("画像エンジンの様子を確認できませんでした。")
+    running = prompt_id in queue_prompt_ids(queue, "queue_running")
+    pending = prompt_id in queue_prompt_ids(queue, "queue_pending")
+    if pending or running:
+        try:
+            comfy_json("POST", "/queue", {"delete": [prompt_id]}, timeout=10)
+        except RuntimeError as error:
+            if not running:
+                raise ValueError("待ちを取り消せませんでした。") from error
+    if running:
+        try:
+            comfy_json("POST", "/interrupt", {"prompt_id": prompt_id}, timeout=10)
+        except RuntimeError:
+            try:
+                comfy_json("POST", "/interrupt", timeout=10)
+            except RuntimeError as error:
+                raise ValueError("描いている絵を止められませんでした。") from error
+    finish_job(prompt_id)
+    return {"ok": True, "running": running}
+
+
+def delete_output_images(items: object) -> dict:
+    if not isinstance(items, list) or not items:
+        raise ValueError("削除する絵を選んでください。")
+    if len(items) > 40:
+        raise ValueError("一度に消せるのは 40 枚までです。")
+    deleted = []
+    missing = []
+    failed = []
+    for item in items:
+        try:
+            path = output_image_path(item)
+        except ValueError as error:
+            failed.append({"error": str(error)})
+            continue
+        relative = path.relative_to(OUTPUT_DIR.resolve())
+        record = {
+            "filename": path.name,
+            "subfolder": "" if relative.parent.as_posix() == "." else relative.parent.as_posix(),
+        }
+        if not path.is_file():
+            missing.append(record)
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            failed.append({**record, "error": "ファイルを消せませんでした。開いているときは閉じてから、もう一度押してください。"})
+            continue
+        deleted.append(record)
+    if not deleted and not missing and failed:
+        raise ValueError(str(failed[0].get("error") or "絵を消せませんでした。"))
+    return {"deleted": deleted, "missing": missing, "failed": failed}
+
+
 def trim_jobs() -> None:
     if len(_jobs) <= 40:
         return
@@ -2413,6 +2496,24 @@ class StudioHandler(BaseHTTPRequestHandler):
             if self.read_json_object() is None:
                 return
             self.send_json(train_api.stop_training())
+            return
+        if path == "/api/jobs/cancel":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                self.send_json(cancel_prompt(str(body.get("prompt_id") or "")))
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+            return
+        if path == "/api/images/delete":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                self.send_json(delete_output_images(body.get("images")))
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
             return
         if path == "/api/open-folder":
             if self.read_json_object(local_only=True) is None:

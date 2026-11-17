@@ -722,6 +722,52 @@ function unfinishedJobs() {
   return queue.filter((job) => job.state === "queued" || job.state === "running");
 }
 
+function dropJob(entry) {
+  const index = queue.indexOf(entry);
+  if (index >= 0) queue.splice(index, 1);
+}
+
+async function postCancel(promptId) {
+  const response = await fetch("/api/jobs/cancel", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt_id: promptId }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "取り消しできませんでした。");
+  return data;
+}
+
+async function cancelQueuedJob(entry, drawing) {
+  const question = drawing
+    ? "いま描いている絵を止めますか？"
+    : "この待ちを取り消しますか？";
+  if (!window.confirm(question)) return;
+  const previous = entry.state;
+  entry.state = "cancelled";
+  renderQueue();
+  if (!entry.promptId) {
+    dropJob(entry);
+    statusLine.classList.remove("error");
+    statusLine.textContent = "待ちを取り消しました。";
+    renderQueue();
+    return;
+  }
+  try {
+    const data = await postCancel(entry.promptId);
+    dropJob(entry);
+    statusLine.classList.remove("error");
+    statusLine.textContent = data.running ? "描いている絵を止めました。" : "待ちを取り消しました。";
+  } catch (error) {
+    entry.state = previous;
+    if (!queue.includes(entry)) queue.push(entry);
+    statusLine.classList.add("error");
+    statusLine.textContent = error.message;
+    if (entry.promptId) ensurePoller();
+  }
+  renderQueue();
+}
+
 function shortPrompt(text) {
   const flat = String(text || "").replace(/\s+/g, " ").trim();
   if (!flat) return "（文章なし）";
@@ -729,7 +775,7 @@ function shortPrompt(text) {
 }
 
 function renderQueue() {
-  const visible = queue.filter((job) => job.state !== "done");
+  const visible = queue.filter((job) => job.state === "queued" || job.state === "running" || job.state === "error");
   const waiting = unfinishedJobs();
   progressWrap.hidden = visible.length === 0;
   document.body.classList.toggle("queue-open", visible.length > 0);
@@ -740,30 +786,45 @@ function renderQueue() {
     const label = document.createElement("p");
     label.className = "queue-label";
     const title = shortPrompt(job.settings.prompt);
+    const head = document.createElement("div");
+    head.className = "queue-head";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "queue-cancel";
     if (job.state === "error") {
       row.classList.add("is-error");
       label.textContent = `${title} — ${job.error}`;
-      row.appendChild(label);
+      cancel.textContent = "閉じる";
+      cancel.addEventListener("click", () => {
+        dropJob(job);
+        renderQueue();
+      });
+      head.append(label, cancel);
+      row.appendChild(head);
     } else {
       const place = waiting.indexOf(job);
-      if (place === 0) {
+      const drawing = place === 0;
+      if (drawing) {
         label.textContent = job.max > 0
           ? `${title} — ${job.stage}（${job.value} / ${job.max} ステップ）`
           : `${title} — ${job.stage || "準備しています"}`;
       } else {
         label.textContent = `${title} — 待ち ${place + 1}`;
       }
+      cancel.textContent = drawing ? "中止" : "取消";
+      cancel.addEventListener("click", () => cancelQueuedJob(job, drawing));
       const track = document.createElement("div");
       track.className = "progress-track";
       const bar = document.createElement("div");
       bar.className = "queue-bar";
-      if (place === 0 && job.max > 0) {
+      if (drawing && job.max > 0) {
         bar.style.width = `${Math.round((job.value / job.max) * 100)}%`;
       } else {
         bar.classList.add("indeterminate");
       }
       track.appendChild(bar);
-      row.append(label, track);
+      head.append(label, cancel);
+      row.append(head, track);
     }
     progressWrap.appendChild(row);
   }
@@ -841,6 +902,19 @@ async function sendJob(entry, payload) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "生成を開始できませんでした。");
     entry.promptId = data.prompt_id;
+    if (entry.state === "cancelled") {
+      try {
+        await postCancel(entry.promptId);
+      } catch (error) {
+        entry.state = "queued";
+        queue.push(entry);
+        statusLine.classList.add("error");
+        statusLine.textContent = error.message;
+        ensurePoller();
+        renderQueue();
+      }
+      return;
+    }
     entry.settings.seed = data.seed;
     if (data.width && data.height) {
       entry.settings.width = data.width;
@@ -852,6 +926,7 @@ async function sendJob(entry, payload) {
     }
     ensurePoller();
   } catch (error) {
+    if (entry.state === "cancelled") return;
     entry.state = "error";
     entry.error = error.message;
     statusLine.classList.add("error");
@@ -896,7 +971,7 @@ async function pollQueue() {
     while (unfinishedJobs().some((job) => job.promptId)) {
       await new Promise((resolve) => setTimeout(resolve, 700));
       for (const entry of unfinishedJobs()) {
-        if (!entry.promptId || entry.state === "error") continue;
+        if (!entry.promptId || entry.state === "error" || entry.state === "cancelled") continue;
         let job;
         try {
           const response = await fetch(`/api/jobs/${entry.promptId}`);
@@ -908,6 +983,7 @@ async function pollQueue() {
           }
           continue;
         }
+        if (entry.state === "cancelled") continue;
         const mark = `${job.state}:${job.stage || ""}:${job.value || 0}:${job.max || 0}`;
         if (mark !== entry.lastMark) {
           entry.lastMark = mark;
@@ -929,6 +1005,7 @@ async function pollQueue() {
           entry.error = job.message || "生成に失敗しました。";
           continue;
         }
+        if (entry.state === "cancelled") continue;
         entry.state = "done";
         entry.settings.seed = job.seed;
         addSession(job.images || [], entry.settings);
@@ -964,8 +1041,20 @@ function createFigure(image, settings) {
   picture.alt = "生成した画像";
   const caption = document.createElement("figcaption");
   caption.textContent = `シード ${settings.seed}（クリックで条件）`;
-  picture.addEventListener("click", () => openDetail(figure));
-  figure.append(picture, caption);
+  picture.addEventListener("click", () => {
+    if (document.body.classList.contains("select-mode")) {
+      toggleSelected(figure);
+      return;
+    }
+    openDetail(figure);
+  });
+  const mark = document.createElement("button");
+  mark.type = "button";
+  mark.className = "pick-mark";
+  mark.textContent = "✓";
+  mark.setAttribute("aria-label", "この絵を選ぶ");
+  mark.addEventListener("click", () => toggleSelected(figure));
+  figure.append(picture, caption, mark);
   return figure;
 }
 
@@ -996,6 +1085,7 @@ function addSession(images, settings) {
   images.forEach((image) => row.append(createFigure(image, settings)));
   section.append(head, row);
   gallery.prepend(section);
+  refreshSelectButton();
 }
 
 function fact(label, value) {
@@ -1159,6 +1249,119 @@ document.querySelector("#detail-close").addEventListener("click", () => {
   detail.close();
 });
 document.querySelector("#detail-folder").addEventListener("click", openOutputFolder);
+
+const selectButton = document.querySelector("#select-images");
+const selectBar = document.querySelector("#select-bar");
+const selectCount = document.querySelector("#select-count");
+const deleteImagesButton = document.querySelector("#delete-images");
+const selectedFigures = new Set();
+
+function refreshSelectButton() {
+  selectButton.hidden = !gallery.querySelector("figure") || document.body.classList.contains("select-mode");
+}
+
+function updateSelectBar() {
+  selectCount.textContent = `${selectedFigures.size}枚選択中`;
+  deleteImagesButton.disabled = selectedFigures.size === 0;
+}
+
+function setSelectMode(on) {
+  document.body.classList.toggle("select-mode", Boolean(on));
+  selectBar.hidden = !on;
+  if (!on) {
+    selectedFigures.clear();
+    gallery.querySelectorAll("figure.is-selected").forEach((figure) => {
+      figure.classList.remove("is-selected");
+      const mark = figure.querySelector(".pick-mark");
+      if (mark) mark.setAttribute("aria-pressed", "false");
+    });
+  }
+  refreshSelectButton();
+  updateSelectBar();
+}
+
+function toggleSelected(figure) {
+  const mark = figure.querySelector(".pick-mark");
+  if (selectedFigures.has(figure)) {
+    selectedFigures.delete(figure);
+    figure.classList.remove("is-selected");
+    if (mark) mark.setAttribute("aria-pressed", "false");
+  } else {
+    selectedFigures.add(figure);
+    figure.classList.add("is-selected");
+    if (mark) mark.setAttribute("aria-pressed", "true");
+  }
+  updateSelectBar();
+}
+
+function imageKey(image) {
+  return `${image.subfolder || ""}/${image.filename || ""}`;
+}
+
+async function deleteFigures(figures) {
+  const list = [...figures].filter((figure) => figure.isConnected && figure.entry);
+  if (!list.length) return;
+  const count = list.length;
+  if (!window.confirm(`選んだ${count}枚を、保存フォルダからも消しますか？消した絵は元に戻せません。`)) return;
+  deleteImagesButton.disabled = true;
+  const detailDelete = document.querySelector("#detail-delete");
+  detailDelete.disabled = true;
+  try {
+    const response = await fetch("/api/images/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        images: list.map((figure) => ({
+          filename: figure.entry.image.filename,
+          subfolder: figure.entry.image.subfolder || "",
+        })),
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "絵を消せませんでした。");
+    const gone = new Set([...(data.deleted || []), ...(data.missing || [])].map((item) => imageKey(item)));
+    for (const figure of list) {
+      if (!gone.has(imageKey(figure.entry.image))) continue;
+      const section = figure.closest(".session");
+      selectedFigures.delete(figure);
+      if (detailFigures.includes(figure)) {
+        detailFigures = detailFigures.filter((item) => item !== figure);
+      }
+      figure.remove();
+      if (section && !section.querySelector("figure")) section.remove();
+    }
+    if (detail.open) {
+      detailFigures = detailFigures.filter((figure) => figure.isConnected);
+      if (!detailFigures.length) detail.close();
+      else {
+        detailIndex = Math.min(detailIndex, detailFigures.length - 1);
+        showDetail();
+      }
+    }
+    const failed = Array.isArray(data.failed) ? data.failed.length : 0;
+    const removed = (data.deleted || []).length + (data.missing || []).length;
+    statusLine.classList.toggle("error", failed > 0);
+    statusLine.textContent = failed
+      ? `${removed}枚消しました。${failed}枚は消せませんでした。`
+      : `${removed}枚消しました。`;
+    if (!gallery.querySelector("figure")) setSelectMode(false);
+  } catch (error) {
+    statusLine.classList.add("error");
+    statusLine.textContent = error.message;
+  } finally {
+    detailDelete.disabled = false;
+    updateSelectBar();
+    refreshSelectButton();
+  }
+}
+
+selectButton.addEventListener("click", () => setSelectMode(true));
+document.querySelector("#select-done").addEventListener("click", () => setSelectMode(false));
+deleteImagesButton.addEventListener("click", () => deleteFigures(selectedFigures));
+document.querySelector("#detail-delete").addEventListener("click", () => {
+  const figure = detailFigures[detailIndex];
+  if (figure) deleteFigures([figure]);
+});
 const onThisPc = location.hostname === "127.0.0.1" || location.hostname === "localhost";
 if (!onThisPc) {
   openFolder.hidden = true;
