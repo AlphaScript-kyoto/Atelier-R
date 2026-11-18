@@ -131,6 +131,25 @@ function addLora(id) {
   selectedLoras.push({ id, strength: 1 });
   renderLoraStack();
 }
+
+window.chooseLoraForCreate = function (id, name) {
+  const known = loraById(id);
+  if (known && !loraFits(known)) {
+    statusLine.classList.add("error");
+    statusLine.textContent = "今の基礎モデルでは、この LoRA は使えません。";
+    return false;
+  }
+  if (!selectedLoras.some((entry) => entry.id === id)) {
+    if (selectedLoras.length >= MAX_LORAS) selectedLoras.shift();
+    selectedLoras.push({ id, strength: 1 });
+  }
+  renderLoraStack();
+  paintTriggers();
+  statusLine.classList.remove("error");
+  statusLine.textContent = `${name || "LoRA"} を選びました。`;
+  promptBox.focus();
+  return true;
+};
 promptBox.addEventListener("input", paintTriggers);
 
 function loraById(id) {
@@ -2040,23 +2059,14 @@ function setupTraining() {
   }
 
   function useMadeLora(item) {
-    const known = loraById(item.id);
-    if (known && !loraFits(known)) {
-      statusLine.classList.add("error");
-      statusLine.textContent = "今の基礎モデルでは、この LoRA は使えません。";
+    const target = window.opener;
+    if (target && !target.closed && typeof target.chooseLoraForCreate === "function") {
+      const ok = target.chooseLoraForCreate(item.id, item.name || item.id);
+      if (ok) target.focus();
+      else setTrainStatus("生成画面の基礎モデルでは、この LoRA は使えません。", true);
       return;
     }
-    if (!selectedLoras.some((entry) => entry.id === item.id)) {
-      if (selectedLoras.length >= MAX_LORAS) selectedLoras.shift();
-      selectedLoras.push({ id: item.id, strength: 1 });
-    }
-    renderLoraStack();
-    paintTriggers();
-    home.close();
-    dialog.close();
-    statusLine.classList.remove("error");
-    statusLine.textContent = `${item.name || "LoRA"} を選びました。`;
-    promptBox.focus();
+    setTrainStatus("創作は、生成画面の LoRA ボタンから開いたタブで使えます。", true);
   }
 
   function openFreshTraining() {
@@ -2102,15 +2112,14 @@ function setupTraining() {
 
   const trainOpen = document.querySelector("#train-open");
   const setTrainOpen = (open) => trainOpen.setAttribute("aria-pressed", open ? "true" : "false");
-  trainOpen.addEventListener("click", async () => {
-    showLoraTab("history");
-    home.showModal();
-    setTrainOpen(true);
-    try {
-      await loadLoraHome();
-    } catch (error) {
-      historyBoard.textContent = error.message;
+  trainOpen.addEventListener("click", () => {
+    const opened = window.open("/lora", "atelier-lora");
+    if (!opened) {
+      statusLine.classList.add("error");
+      statusLine.textContent = "新しいタブを開けませんでした。ブラウザでポップアップを許可してください。";
+      return;
     }
+    opened.focus();
   });
   dialog.addEventListener("close", () => {
     if (!home.open) setTrainOpen(false);
@@ -2142,6 +2151,15 @@ function setupTraining() {
     const text = cropText();
     grid.querySelectorAll(".train-crop").forEach((badge) => { badge.textContent = text; });
   });
+  if (location.pathname === "/lora") {
+    document.body.classList.add("lora-page");
+    document.title = "LoRA · Atelier R";
+    home.setAttribute("open", "");
+    showLoraTab("history");
+    loadLoraHome().catch((error) => {
+      historyBoard.textContent = error.message;
+    });
+  }
   document.querySelector("#train-close").addEventListener("click", () => dialog.close());
   document.querySelector("#train-scrim").addEventListener("click", () => dialog.close());
   document.querySelectorAll(".train-goal .choice").forEach((button) => {

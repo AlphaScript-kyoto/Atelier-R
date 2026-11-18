@@ -1424,7 +1424,31 @@ figcaption {
 }
 .train-crop { left: 6px; padding: 3px 6px; }
 .train-info { right: 6px; width: 26px; height: 26px; padding: 0; cursor: pointer; }
-.lora-tabs { display: flex; gap: 8px; }
+body.lora-page { display: block; background: var(--bg); }
+body.lora-page #tool-rail,
+body.lora-page #select-tools,
+body.lora-page #sheet-scrim,
+body.lora-page #composer,
+body.lora-page #gallery { display: none; }
+body.lora-page dialog#lora-home[open] {
+  display: block;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  border: 0;
+}
+body.lora-page #lora-home .picker-panel {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+body.lora-page #lora-home-scrim,
+body.lora-page #lora-home-close { display: none; }
 .lora-board { min-height: 240px; }
 .lora-board[hidden] { display: none; }
 .history-grid, .made-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }

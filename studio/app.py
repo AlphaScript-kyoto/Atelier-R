@@ -2928,7 +2928,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def send_static(self, path: str) -> None:
-        relative = "index.html" if path in {"", "/"} else path.lstrip("/")
+        relative = "index.html" if path in {"", "/", "/lora"} else path.lstrip("/")
         file_path = (STATIC_DIR / relative).resolve()
         if STATIC_DIR.resolve() not in file_path.parents and file_path != STATIC_DIR.resolve():
             self.send_error(404)
