@@ -224,64 +224,68 @@
         <h2>LoRA を学習</h2>
         <button id="train-close" type="button">閉じる</button>
       </div>
-      <div class="train-body">
-        <div class="train-goal" role="group" aria-label="学び方">
-          <button id="goal-style" type="button" class="choice" data-goal="style" aria-pressed="true">画風</button>
-          <button id="goal-character" type="button" class="choice" data-goal="character" aria-pressed="false">キャラクター</button>
-          <button id="goal-face" type="button" class="choice" data-goal="face" aria-pressed="false">顔の特徴</button>
-        </div>
-        <p id="train-goal-note" class="hint"></p>
-        <label for="train-name">名前</label>
-        <input id="train-name" maxlength="40" placeholder="例: 水彩の画風">
-        <label for="train-trigger">呼び方</label>
-        <input id="train-trigger" maxlength="40" placeholder="例: rstyle" autocomplete="off">
-        <p class="hint">呼び方は、絵に出すときにプロンプトへ書く言葉です。普通の英単語は避けて、短い造語にしてください。</p>
-        <label for="train-checkpoint">基礎モデル</label>
-        <select id="train-checkpoint"></select>
-        <p id="train-flux-note" class="hint" hidden>顔の特徴は FLUX.2 用です。今は文章の下準備までできます。学習そのものは、次の対応で足します。</p>
-        <div id="train-settings" class="train-settings">
-          <label>大きさ
+      <div class="train-body train-layout">
+        <section class="train-params">
+          <h3 class="train-step">1 パラメータ設定</h3>
+          <div class="train-goal" role="group" aria-label="学び方">
+            <button id="goal-style" type="button" class="choice" data-goal="style" aria-pressed="true">画風</button>
+            <button id="goal-character" type="button" class="choice" data-goal="character" aria-pressed="false">キャラクター</button>
+            <button id="goal-face" type="button" class="choice" data-goal="face" aria-pressed="false">顔の特徴</button>
+          </div>
+          <p id="train-goal-note" class="hint"></p>
+          <label for="train-name">タスク名</label>
+          <input id="train-name" maxlength="40" placeholder="今回のトレーニングタスク名を入力してください">
+          <label for="train-checkpoint">基礎モデル</label>
+          <select id="train-checkpoint"></select>
+          <p id="train-flux-note" class="hint" hidden>顔の特徴は FLUX.2 用です。今は文章の下準備までできます。学習そのものは、次の対応で足します。</p>
+          <div id="train-settings">
+            <label for="train-rank">大きさ</label>
             <select id="train-rank">
               <option value="8">小さめ</option>
               <option value="16">標準</option>
               <option value="32">しっかり</option>
             </select>
-          </label>
-          <label>繰り返し
+            <label for="train-repeats">繰り返し</label>
             <input id="train-repeats" type="number" min="5" max="80" step="1" value="20">
-          </label>
-          <label>エポック
+            <label for="train-epochs">エポック</label>
             <input id="train-epochs" type="number" min="1" max="10" step="1" value="1">
-          </label>
-          <label>解像度
-            <select id="train-resolution">
-              <option value="768" selected>768</option>
-              <option value="1024">1024</option>
-            </select>
-          </label>
-        </div>
-        <p class="hint" id="train-plan">繰り返し20 × エポック1。画像を入れると、枚数を掛けた回数が学習回数です。LoRAは1個できます。同時に学習できるのは1つです。</p>
-        <label for="train-preview-prompt">モデル効果プレビューのプロンプト</label>
-        <textarea id="train-preview-prompt" maxlength="800" rows="3" placeholder="(masterpiece, best quality:1.2), 1girl, solo, soft expression, warm atmosphere"></textarea>
-        <p class="hint">1周終わるたびに、この文章で見本を1枚描きます。呼び方は、入っていなければ自動で前に付きます。見本は768の正方形で、同じ乱数なので周ごとの違いが比べやすいです。</p>
-        <div class="section-head">
-          <span class="label">画像</span>
-          <label class="file-button">画像を追加<input id="train-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
-        </div>
-        <p class="hint">5枚以上、15枚くらいが扱いやすいです。正方形に切り取って覚えます。学習中は、生成を待ってください。</p>
-        <div id="train-grid" class="train-grid"></div>
-        <label class="check-line"><input id="train-drop-face" type="checkbox"> 髪や目の説明は外して、呼び方に覚えさせる</label>
-        <label class="check-line"><input id="train-overwrite" type="checkbox"> すでにある説明も付け直す</label>
-        <div class="train-actions">
-          <button id="train-autotag" type="button">タグを自動で付ける</button>
-          <button id="train-start" type="button">学習を始める</button>
-          <button id="train-stop" type="button" hidden>学習を止める</button>
-        </div>
-        <div id="train-progress" class="train-progress" hidden><div id="train-progress-bar"></div></div>
-        <p id="train-status" class="hint"></p>
-        <div id="train-results" class="train-results" hidden></div>
-        <p id="train-keep-note" class="hint" hidden>カードを押して選びます。1つでも、複数でも残せます。選ばなかったものは消えます。</p>
-        <button id="train-keep" type="button" hidden>選んだものを保存</button>
+          </div>
+          <p class="hint" id="train-plan">繰り返し20 × エポック1。画像を入れると、枚数を掛けた回数が学習回数です。LoRAは1個できます。同時に学習できるのは1つです。</p>
+          <label for="train-trigger">トリガーワード</label>
+          <input id="train-trigger" maxlength="40" placeholder="例: rstyle" autocomplete="off">
+          <p class="hint">呼び方は、絵に出すときにプロンプトへ書く言葉です。普通の英単語は避けて、短い造語にしてください。</p>
+          <label for="train-preview-prompt">モデル効果プレビューのプロンプト</label>
+          <textarea id="train-preview-prompt" maxlength="800" rows="4" placeholder="(masterpiece, best quality:1.2), 1girl, solo, soft expression, warm atmosphere"></textarea>
+          <p class="hint">1周終わるたびに、この文章で見本を1枚描きます。呼び方は、入っていなければ自動で前に付きます。</p>
+        </section>
+        <section class="train-dataset">
+          <div class="train-dataset-head">
+            <h3 class="train-step">2 画像タグ付け / 切り抜き <span id="train-count"></span></h3>
+            <div class="train-actions">
+              <button id="train-start" type="button">学習を始める</button>
+              <button id="train-stop" type="button" hidden>学習を止める</button>
+            </div>
+          </div>
+          <div class="train-dataset-tools">
+            <label>切り抜きサイズ
+              <select id="train-resolution">
+                <option value="768" selected>768×768</option>
+                <option value="1024">1024×1024</option>
+              </select>
+            </label>
+            <label class="file-button">画像を追加<input id="train-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
+            <button id="train-autotag" type="button">タグを自動で付ける</button>
+          </div>
+          <p class="hint">5枚以上、15枚くらいが扱いやすいです。中央を正方形に切って覚えます。右上の i で、タグを直せます。</p>
+          <div id="train-grid" class="train-grid"></div>
+          <label class="check-line"><input id="train-drop-face" type="checkbox"> 髪や目の説明は外して、呼び方に覚えさせる</label>
+          <label class="check-line"><input id="train-overwrite" type="checkbox"> すでにある説明も付け直す</label>
+          <div id="train-progress" class="train-progress" hidden><div id="train-progress-bar"></div></div>
+          <p id="train-status" class="hint"></p>
+          <div id="train-results" class="train-results" hidden></div>
+          <p id="train-keep-note" class="hint" hidden>カードを押して選びます。1つでも、複数でも残せます。選ばなかったものは消えます。</p>
+          <button id="train-keep" type="button" hidden>選んだものを保存</button>
+        </section>
       </div>
     </div>
   </dialog>

@@ -1362,9 +1362,33 @@ figcaption {
 .train-body {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding-right: 4px;
+  overflow: hidden;
+  padding-right: 0;
 }
+.train-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 18px;
+  height: 100%;
+}
+.train-params, .train-dataset {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
+}
+.train-step { margin: 0 0 12px; font-size: 15px; }
+.train-dataset-head, .train-dataset-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.train-dataset-head { position: sticky; top: 0; z-index: 2; background: #171a22; padding-bottom: 8px; }
+.train-dataset-tools { margin-bottom: 8px; }
+.train-dataset-tools label { margin: 0; font-size: 12px; }
+.train-dataset-tools select { min-width: 140px; }
+#train-count { color: var(--muted); font-weight: 700; }
 .train-goal { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .train-body input[type="text"],
 .train-body input[type="number"],
@@ -1380,8 +1404,8 @@ figcaption {
   background: var(--card);
   color: var(--text);
 }
-.train-settings { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; margin-top: 8px; }
-.train-settings[hidden],
+#train-settings { display: block; }
+#train-settings[hidden],
 #train-start[hidden],
 #train-stop[hidden],
 #train-flux-note[hidden],
@@ -1598,5 +1622,6 @@ body.lora-page #lora-home-close { display: none; }
     max-height: 100dvh;
     padding: calc(12px + env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom));
   }
+  .train-layout { grid-template-columns: 1fr; overflow: auto; }
   .train-settings { grid-template-columns: 1fr; }
 }

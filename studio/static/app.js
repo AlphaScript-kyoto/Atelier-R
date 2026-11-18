@@ -1831,6 +1831,8 @@ function setupTraining() {
     const epochs = Number(epochInput.value) || 0;
     const steps = images * repeats * epochs;
     const files = `LoRAは${epochs}個できます。`;
+    const count = document.querySelector("#train-count");
+    if (count) count.textContent = images ? `${images}枚` : "";
     plan.textContent = images
       ? `${images}枚 × 繰り返し${repeats} × エポック${epochs} = ${steps}回。${files}同時に学習できるのは1つです。`
       : `繰り返し${repeats} × エポック${epochs}。画像を入れると、枚数を掛けた回数が学習回数です。${files}同時に学習できるのは1つです。`;
