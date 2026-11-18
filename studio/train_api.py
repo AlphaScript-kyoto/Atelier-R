@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -227,9 +228,19 @@ def _watch(process: subprocess.Popen, progress_path: Path, done_info: dict) -> N
             except json.JSONDecodeError:
                 continue
             if isinstance(payload, dict):
+                message = str(payload.get("message") or "")
+                # Windows のパイプが日本語を壊したときは、UTF-8 で書いたファイルを使う。
+                if "\ufffd" in message and progress_path.is_file():
+                    try:
+                        saved = json.loads(progress_path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        saved = None
+                    if isinstance(saved, dict) and saved.get("message") and "\ufffd" not in str(saved.get("message")):
+                        message = str(saved["message"])
+                        payload = saved
                 _set_job(
                     state=str(payload.get("state") or "running"),
-                    message=str(payload.get("message") or ""),
+                    message=message,
                     step=int(payload.get("step") or 0),
                     total=int(payload.get("total") or 0),
                     loss=payload.get("loss"),
@@ -315,6 +326,9 @@ def start_training(spec: dict) -> dict:
     }
     (folder / "job.json").write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
     _set_job(state="running", message="学習の準備をしています。", step=0, total=len(images) * repeats, loss=None, log=[])
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     process = subprocess.Popen(
         [sys.executable, "-u", str(TRAIN_SCRIPT), "--job", str(folder / "job.json")],
         cwd=ROOT,
@@ -323,6 +337,7 @@ def start_training(spec: dict) -> dict:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=env,
     )
     with _lock:
         _process = process
