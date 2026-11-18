@@ -2351,6 +2351,24 @@ class StudioHandler(BaseHTTPRequestHandler):
             except ValueError as error:
                 self.send_json({"error": str(error)}, status=400)
             return
+        if parsed.path == "/api/train/preview":
+            query = urllib.parse.parse_qs(parsed.query)
+            if not self.from_studio_get():
+                self.send_error(403)
+                return
+            try:
+                path = train_api.preview_file((query.get("dataset") or [""])[0], (query.get("name") or [""])[0])
+            except ValueError:
+                self.send_error(404)
+                return
+            data = path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if parsed.path == "/api/train/image":
             query = urllib.parse.parse_qs(parsed.query)
             if not self.from_studio_get():
@@ -2576,6 +2594,33 @@ class StudioHandler(BaseHTTPRequestHandler):
                 self.begin_training(body)
             except ValueError as error:
                 self.send_json({"error": str(error)}, status=400)
+            return
+        if path == "/api/train/keep":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                saved = train_api.take_candidates(str(body.get("dataset") or ""), body.get("files"))
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+                return
+            names = []
+            for item in saved:
+                name = str(item["name"])
+                image = item.get("image")
+                names.append(name)
+                if not image:
+                    continue
+                for _ in range(5):
+                    try:
+                        save_model_card("loras", name, "", image)
+                        break
+                    except ValueError:
+                        time.sleep(1)
+                    except Exception as error:
+                        print(f"保存した LoRA のサムネイルを付けられませんでした: {error}", flush=True)
+                        break
+            self.send_json({"ok": True, "saved": names})
             return
         if path == "/api/train/stop":
             if self.read_json_object() is None:
@@ -2964,25 +3009,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    def _remember_trained_lora(info: dict) -> None:
-        names = info.get("outputs") or ([info["output"]] if info.get("output") else [])
-        preview = Path(str(info.get("preview") or ""))
-        if not names or not preview.is_file():
-            return
-        data = preview.read_bytes()
-        for output in names:
-            for _ in range(5):
-                try:
-                    save_model_card("loras", str(output), "", data)
-                    break
-                except ValueError:
-                    time.sleep(1)
-                except Exception as error:
-                    print(f"学習した LoRA のサムネイルを付けられませんでした: {error}", flush=True)
-                    break
-            else:
-                print(f"{output} は保存しました。サムネイルは、一覧のカードから後で入れられます。", flush=True)
-
-    train_api.set_on_done(_remember_trained_lora)
     os.chdir(ROOT)
     main()

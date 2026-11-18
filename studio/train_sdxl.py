@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import gc
 import json
 import os
@@ -102,6 +103,64 @@ def inject_lora(unet, rank: int, alpha: int) -> list[str]:
     return names
 
 
+PREVIEW_NEGATIVE = "worst quality, low quality, bad anatomy, bad hands, missing fingers, extra digits, text, watermark, blurry"
+
+
+def preview_caption(trigger: str, prompt: str) -> str:
+    text = prompt.strip()
+    word = trigger.strip()
+    if word and word.lower() not in text.lower():
+        return f"{word}, {text}"
+    return text
+
+
+def render_preview(unet, vae, text_encoder, text_encoder_2, tokenizer, tokenizer_2, scheduler, prompt: str, output: Path, device, dtype) -> None:
+    """学習の途中で、同じ乱数の見本を1枚だけ描く。描き終わったら文章側はメモリへ戻す。"""
+    from diffusers import StableDiffusionXLPipeline
+
+    vae.to(device)
+    text_encoder.to(device)
+    text_encoder_2.to(device)
+    unet.eval()
+    try:
+        if hasattr(unet, "disable_gradient_checkpointing"):
+            unet.disable_gradient_checkpointing()
+        pipe = StableDiffusionXLPipeline(
+            vae=vae,
+            text_encoder=text_encoder,
+            text_encoder_2=text_encoder_2,
+            tokenizer=tokenizer,
+            tokenizer_2=tokenizer_2,
+            unet=unet,
+            scheduler=copy.deepcopy(scheduler),
+        )
+        pipe.set_progress_bar_config(disable=True)
+        generator = torch.Generator(device=device).manual_seed(1204)
+        with torch.no_grad():
+            image = pipe(
+                prompt=prompt,
+                negative_prompt=PREVIEW_NEGATIVE,
+                width=768,
+                height=768,
+                num_inference_steps=20,
+                guidance_scale=5.5,
+                clip_skip=2,
+                generator=generator,
+            ).images[0]
+        output.parent.mkdir(parents=True, exist_ok=True)
+        image.convert("RGB").save(output, "JPEG", quality=90)
+    finally:
+        vae.to("cpu")
+        text_encoder.to("cpu")
+        text_encoder_2.to("cpu")
+        if hasattr(unet, "enable_gradient_checkpointing"):
+            unet.enable_gradient_checkpointing()
+        unet.train()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
 def save_lora(unet, names: list[str], output: Path, alpha: int, meta: dict) -> None:
     tensors = {}
     modules = dict(unet.named_modules())
@@ -164,9 +223,17 @@ def train(job_path: Path) -> None:
         cached.append((latent.cpu(), embeds.cpu(), pooled.cpu(), time_ids))
         report(progress, state="running", step=0, total=total, message=f"画像を変換しています（{index}/{len(images)}）。")
     unet = pipe.unet
+    vae = pipe.vae
+    text_encoder = pipe.text_encoder
+    text_encoder_2 = pipe.text_encoder_2
+    tokenizer = pipe.tokenizer
+    tokenizer_2 = pipe.tokenizer_2
     scheduler = pipe.scheduler
     prediction_type = scheduler.config.prediction_type
     del pipe
+    vae.to("cpu")
+    text_encoder.to("cpu")
+    text_encoder_2.to("cpu")
     gc.collect()
     torch.cuda.empty_cache()
     names = inject_lora(unet, rank, rank)
@@ -186,9 +253,18 @@ def train(job_path: Path) -> None:
     unet.enable_gradient_checkpointing()
     unet.train()
     optimizer = torch.optim.AdamW(params, lr=1e-4, weight_decay=0.01)
-    report(progress, state="running", step=0, total=total, message="学習を始めています。")
+    made: list[dict] = []
+
+    def tell(step: int, message: str, loss: float | None = None, state: str = "running") -> None:
+        payload = {"state": state, "step": step, "total": total, "message": message, "candidates": made}
+        if loss is not None:
+            payload["loss"] = round(loss, 4)
+        report(progress, **payload)
+
+    tell(0, "学習を始めています。")
     losses = []
     step = 0
+    sample_prompt = preview_caption(str(job.get("trigger") or ""), str(job.get("preview_prompt") or ""))
     for epoch in range(1, epochs + 1):
         for _ in range(per_epoch):
             step += 1
@@ -221,19 +297,12 @@ def train(job_path: Path) -> None:
             losses.append(float(loss.detach().cpu()))
             if step == 1 or step % 5 == 0 or step == total:
                 average = sum(losses[-20:]) / len(losses[-20:])
-                report(
-                    progress,
-                    state="running",
-                    step=step,
-                    total=total,
-                    loss=round(average, 4),
-                    message=f"学習中です（エポック {epoch}/{epochs}、{step}/{total}）。",
-                )
+                tell(step, f"学習中です（エポック {epoch}/{epochs}、{step}/{total}）。", average)
         output = outputs[epoch - 1] if epoch - 1 < len(outputs) else outputs[-1]
         label = job.get("name") or output.stem
         if epochs > 1:
             label = f"{label} {epoch}/{epochs}"
-        report(progress, state="running", step=step, total=total, message=f"エポック {epoch}/{epochs} の LoRA を保存しています。")
+        tell(step, f"エポック {epoch}/{epochs} の LoRA を保存しています。")
         save_lora(
             unet,
             names,
@@ -251,7 +320,40 @@ def train(job_path: Path) -> None:
                 "ss_epoch": epoch,
             },
         )
-    report(progress, state="done", step=total, total=total, message=f"学習が終わりました。LoRA が {epochs} 個できました。")
+        preview_path = output.with_suffix(".jpg")
+        preview_name = ""
+        tell(step, f"エポック {epoch}/{epochs} の見本を描いています。")
+        try:
+            render_preview(
+                unet,
+                vae,
+                text_encoder,
+                text_encoder_2,
+                tokenizer,
+                tokenizer_2,
+                scheduler,
+                sample_prompt,
+                preview_path,
+                device,
+                dtype,
+            )
+            preview_name = preview_path.name
+        except Exception as error:
+            preview_path.unlink(missing_ok=True)
+            print(f"見本を描けませんでした: {error}", flush=True)
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        made.append(
+            {
+                "epoch": epoch,
+                "file": output.name,
+                "label": label,
+                "preview": preview_name,
+            }
+        )
+        tell(step, f"エポック {epoch}/{epochs} の見本ができました。")
+    tell(total, "見本ができました。残したいカードを選んで保存してください。")
 
 
 def main() -> None:

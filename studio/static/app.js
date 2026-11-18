@@ -1603,6 +1603,7 @@ function setupTraining() {
   const rankInput = document.querySelector("#train-rank");
   const repeatsInput = document.querySelector("#train-repeats");
   const epochInput = document.querySelector("#train-epochs");
+  const previewInput = document.querySelector("#train-preview-prompt");
   const resolutionInput = document.querySelector("#train-resolution");
   const plan = document.querySelector("#train-plan");
   const fileInput = document.querySelector("#train-files");
@@ -1616,6 +1617,12 @@ function setupTraining() {
   const startButton = document.querySelector("#train-start");
   const stopButton = document.querySelector("#train-stop");
   const trainStatus = document.querySelector("#train-status");
+  const progress = document.querySelector("#train-progress");
+  const progressBar = document.querySelector("#train-progress-bar");
+  const results = document.querySelector("#train-results");
+  const keepButton = document.querySelector("#train-keep");
+  const keepNote = document.querySelector("#train-keep-note");
+  const picked = new Set();
   const notes = {
     style: "画風を覚えます。タグには、写っている人や物を残します。画風そのものは書かないので、呼び方の方に残ります。",
     character: "キャラクターを覚えます。髪や目のタグを外すと、その特徴は呼び方に結び付きます。",
@@ -1743,6 +1750,67 @@ function setupTraining() {
     return saved;
   }
 
+  function paintResults(list, dataset, state) {
+    const items = Array.isArray(list) ? list : [];
+    const alive = new Set(items.map((item) => item.file));
+    results.querySelectorAll(".train-result").forEach((card) => {
+      if (!alive.has(card.dataset.file)) card.remove();
+    });
+    items.forEach((item, index) => {
+      let card = [...results.children].find((node) => node.dataset.file === item.file);
+      if (!card) {
+        card = document.createElement("button");
+        card.type = "button";
+        card.className = "train-result";
+        card.dataset.file = item.file;
+        card.addEventListener("click", () => {
+          const on = card.getAttribute("aria-pressed") !== "true";
+          card.setAttribute("aria-pressed", on ? "true" : "false");
+          if (on) picked.add(item.file);
+          else picked.delete(item.file);
+          keepButton.disabled = picked.size === 0;
+        });
+        results.appendChild(card);
+      }
+      card.setAttribute("aria-pressed", picked.has(item.file) ? "true" : "false");
+      const caption = `${index + 1}. ${item.label || item.file}`;
+      let visual = card.querySelector("img, .train-result-wait");
+      if (item.preview && dataset) {
+        const url = `/api/train/preview?dataset=${encodeURIComponent(dataset)}&name=${encodeURIComponent(item.preview)}`;
+        if (!visual || visual.tagName !== "IMG") {
+          visual = document.createElement("img");
+          visual.alt = caption;
+          card.prepend(visual);
+          card.querySelector(".train-result-wait")?.remove();
+        }
+        if (visual.dataset.url !== url) {
+          visual.dataset.url = url;
+          visual.src = url;
+        }
+      } else if (!visual || !visual.classList.contains("train-result-wait")) {
+        visual = document.createElement("div");
+        visual.className = "train-result-wait";
+        card.prepend(visual);
+        card.querySelector("img")?.remove();
+      }
+      if (visual.classList.contains("train-result-wait")) {
+        visual.textContent = state === "running" ? "見本を描いています" : "見本は描けませんでした";
+      }
+      let title = card.querySelector("strong");
+      if (!title) {
+        title = document.createElement("strong");
+        card.appendChild(title);
+      }
+      title.textContent = caption;
+    });
+    const show = items.length > 0;
+    results.hidden = !show;
+    const canSave = show && state !== "running";
+    keepNote.hidden = !canSave;
+    keepButton.hidden = !canSave;
+    keepButton.disabled = picked.size === 0;
+  }
+
   async function pollTrain() {
     if (polling) return;
     polling = true;
@@ -1751,11 +1819,17 @@ function setupTraining() {
       if (!response.ok) return;
       const data = await response.json();
       const running = data.state === "running";
+      if (data.dataset) datasetId = data.dataset;
       stopButton.hidden = !running;
       startButton.disabled = running;
+      const total = Number(data.total) || 0;
+      const step = Number(data.step) || 0;
+      progress.hidden = !running;
+      progressBar.style.width = total > 0 ? `${Math.min(100, Math.round((step / total) * 100))}%` : "0%";
+      paintResults(data.candidates, data.dataset, data.state);
       if (running) {
         const loss = data.loss == null ? "" : ` 誤差 ${data.loss}`;
-        const text = `${data.message || "学習中です。"} ${data.step || 0}/${data.total || 0}${loss}`;
+        const text = `${data.message || "学習中です。"} ${step}/${total}${loss}`;
         setTrainStatus(text, false);
         statusLine.textContent = text;
         setTimeout(pollTrain, 2000);
@@ -1763,9 +1837,10 @@ function setupTraining() {
         setTrainStatus(data.message || "", data.state === "error");
       } else if (data.state === "done" && !seenDone) {
         seenDone = true;
-        setTrainStatus(data.message || "学習が終わりました。", false);
-        await loadOptions();
-        statusLine.textContent = "学習が終わりました。LoRA の一覧から追加できます。";
+        setTrainStatus(data.message || "見本ができました。残したいカードを選んで保存してください。", false);
+        statusLine.textContent = data.message || "見本ができました。残したいカードを選んで保存してください。";
+      } else if (data.state === "done") {
+        setTrainStatus(data.message || "", false);
       }
     } catch (error) {
       setTrainStatus("進み具合を確認できませんでした。", true);
@@ -1841,6 +1916,8 @@ function setupTraining() {
       const saved = await ensureDataset();
       if ((saved.images || []).length < 5) throw new Error("画像は 5 枚以上にしてください。");
       seenDone = false;
+      picked.clear();
+      paintResults([], "", "running");
       await trainPost("/api/train/start", {
         dataset: saved.id,
         checkpoint: checkpointInput.value,
@@ -1851,6 +1928,7 @@ function setupTraining() {
         repeats: Number(repeatsInput.value),
         epochs: Number(epochInput.value),
         resolution: Number(resolutionInput.value),
+        preview_prompt: previewInput.value.trim(),
         output: `${triggerInput.value.trim() || "lora"}_${goal}`,
       });
       pollTrain();
@@ -1865,6 +1943,27 @@ function setupTraining() {
       setTrainStatus("学習を止めています。", false);
     } catch (error) {
       setTrainStatus(error.message, true);
+    }
+  });
+  keepButton.addEventListener("click", async () => {
+    if (!picked.size) {
+      setTrainStatus("残すカードを1つ以上選んでください。", true);
+      return;
+    }
+    const count = picked.size;
+    if (!window.confirm(`選んだ ${count} 個を保存します。選んでいないものは消えます。`)) return;
+    keepButton.disabled = true;
+    try {
+      const saved = await trainPost("/api/train/keep", { dataset: datasetId, files: [...picked] });
+      picked.clear();
+      paintResults([], "", "done");
+      await loadOptions();
+      const text = `${(saved.saved || []).length} 個保存しました。LoRA の一覧から追加できます。`;
+      setTrainStatus(text, false);
+      statusLine.textContent = text;
+    } catch (error) {
+      setTrainStatus(error.message, true);
+      keepButton.disabled = false;
     }
   });
   repeatsInput.addEventListener("input", paintPlan);

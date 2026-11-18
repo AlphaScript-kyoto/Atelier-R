@@ -216,6 +216,9 @@
           </label>
         </div>
         <p class="hint" id="train-plan">繰り返し20 × エポック1。画像を入れると、枚数を掛けた回数が学習回数です。LoRAは1個できます。同時に学習できるのは1つです。</p>
+        <label for="train-preview-prompt">モデル効果プレビューのプロンプト</label>
+        <textarea id="train-preview-prompt" maxlength="800" rows="3" placeholder="(masterpiece, best quality:1.2), 1girl, solo, soft expression, warm atmosphere"></textarea>
+        <p class="hint">1周終わるたびに、この文章で見本を1枚描きます。呼び方は、入っていなければ自動で前に付きます。見本は768の正方形で、同じ乱数なので周ごとの違いが比べやすいです。</p>
         <div class="section-head">
           <span class="label">画像</span>
           <label class="file-button">画像を追加<input id="train-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
@@ -229,7 +232,11 @@
           <button id="train-start" type="button">学習を始める</button>
           <button id="train-stop" type="button" hidden>学習を止める</button>
         </div>
+        <div id="train-progress" class="train-progress" hidden><div id="train-progress-bar"></div></div>
         <p id="train-status" class="hint"></p>
+        <div id="train-results" class="train-results" hidden></div>
+        <p id="train-keep-note" class="hint" hidden>カードを押して選びます。1つでも、複数でも残せます。選ばなかったものは消えます。</p>
+        <button id="train-keep" type="button" hidden>選んだものを保存</button>
       </div>
     </div>
   </dialog>
