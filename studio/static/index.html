@@ -194,25 +194,34 @@
     <button id="tag-detail-scrim" type="button" aria-label="閉じる"></button>
     <div class="picker-panel tag-panel">
       <div class="picker-head">
-        <h2>画像のタグ</h2>
+        <h2>画像詳細</h2>
         <button id="tag-detail-close" type="button">閉じる</button>
       </div>
       <div class="tag-layout">
-        <img id="tag-detail-image" alt="">
-        <div>
-          <h3>この画像のタグ</h3>
-          <div id="tag-own" class="tag-chips"></div>
-          <div class="tag-add">
-            <input id="tag-own-input" type="text" maxlength="80" placeholder="タグを追加">
-            <button id="tag-own-add" type="button">追加</button>
+        <div class="tag-stage-wrap">
+          <div class="tag-stage">
+            <button id="tag-prev" type="button" class="tag-nav" aria-label="前の画像">‹</button>
+            <img id="tag-detail-image" alt="">
+            <button id="tag-next" type="button" class="tag-nav tag-nav-next" aria-label="次の画像">›</button>
           </div>
-          <h3>すべての画像に追加または削除するタグ</h3>
-          <p class="hint">ここに出したタグは、学習用の画像全部に足せます。× を押すと、全部の画像から外れます。</p>
-          <div id="tag-all" class="tag-chips"></div>
-          <div class="tag-add">
-            <input id="tag-all-input" type="text" maxlength="80" placeholder="全部の画像に足すタグ">
-            <button id="tag-all-add" type="button">全部に追加</button>
-          </div>
+          <div id="tag-film" class="tag-film"></div>
+        </div>
+        <div class="tag-side">
+          <section class="tag-box">
+            <h3>この画像のタグ</h3>
+            <div id="tag-own" class="tag-chips"></div>
+          </section>
+          <section class="tag-box">
+            <h3>全ての画像に追加または削除</h3>
+            <div id="tag-all" class="tag-chips"></div>
+            <div class="tag-add">
+              <input id="tag-input" type="text" maxlength="80" placeholder="入力してください">
+            </div>
+            <div class="tag-add-actions">
+              <button id="tag-add-front" type="button">先頭に追加</button>
+              <button id="tag-add-end" type="button">末尾に追加</button>
+            </div>
+          </section>
         </div>
       </div>
     </div>
@@ -276,7 +285,7 @@
             <label class="file-button">画像を追加<input id="train-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
             <button id="train-autotag" type="button">タグを自動で付ける</button>
           </div>
-          <p class="hint">5枚以上、15枚くらいが扱いやすいです。中央を正方形に切って覚えます。右上の i で、タグを直せます。</p>
+          <p class="hint">5枚以上、15枚くらいが扱いやすいです。中央を正方形に切って覚えます。タグは、右上の i を押したときだけ開きます。</p>
           <div id="train-grid" class="train-grid"></div>
           <label class="check-line"><input id="train-drop-face" type="checkbox"> 髪や目の説明は外して、呼び方に覚えさせる</label>
           <label class="check-line"><input id="train-overwrite" type="checkbox"> すでにある説明も付け直す</label>
@@ -289,6 +298,37 @@
       </div>
     </div>
   </dialog>
+  <section id="train-watch" hidden>
+    <header class="watch-top">
+      <div>
+        <div class="watch-title-row">
+          <strong id="watch-title">お待ちください...</strong>
+          <span id="watch-eta"></span>
+        </div>
+        <div class="watch-bar-row">
+          <div id="watch-progress" class="train-progress"><div id="watch-progress-bar"></div></div>
+          <p id="watch-meta"></p>
+        </div>
+      </div>
+      <button id="watch-stop" type="button" hidden>トレーニングを停止</button>
+    </header>
+    <div class="watch-layout">
+      <section class="watch-main">
+        <strong id="watch-count">LoRA 0/1</strong>
+        <div id="watch-cards" class="watch-cards"></div>
+        <div class="watch-foot">
+          <label class="check-line"><input id="watch-all" type="checkbox"> 全て選択 <span id="watch-picked">選択済み 0</span></label>
+          <button id="watch-keep" type="button" hidden>保存</button>
+        </div>
+      </section>
+      <aside class="watch-sample">
+        <h2>リアルタイムサンプル画像</h2>
+        <div id="watch-sample" class="watch-sample-view">
+          <p class="watch-empty">現在サンプル画像はありません</p>
+        </div>
+      </aside>
+    </div>
+  </section>
   <script src="/app.js"></script>
 </body>
 </html>

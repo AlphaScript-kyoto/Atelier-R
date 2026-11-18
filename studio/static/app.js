@@ -1637,7 +1637,6 @@ function setupTraining() {
   const stopButton = document.querySelector("#train-stop");
   const trainStatus = document.querySelector("#train-status");
   const progress = document.querySelector("#train-progress");
-  const progressBar = document.querySelector("#train-progress-bar");
   const results = document.querySelector("#train-results");
   const keepButton = document.querySelector("#train-keep");
   const keepNote = document.querySelector("#train-keep-note");
@@ -1650,8 +1649,6 @@ function setupTraining() {
   const tagImage = document.querySelector("#tag-detail-image");
   const tagOwn = document.querySelector("#tag-own");
   const tagAll = document.querySelector("#tag-all");
-  const tagOwnInput = document.querySelector("#tag-own-input");
-  const tagAllInput = document.querySelector("#tag-all-input");
   let imageRows = [];
   let tagName = "";
   const notes = {
@@ -1748,17 +1745,6 @@ function setupTraining() {
       info.setAttribute("aria-label", "タグを見る");
       info.addEventListener("click", () => openTagDetail(item.name));
       frame.append(photo, crop, info);
-      const caption = document.createElement("textarea");
-      caption.value = item.caption || "";
-      caption.placeholder = "自動で付けるか、自分で書きます";
-      caption.addEventListener("change", async () => {
-        try {
-          await trainPost("/api/train/caption", { dataset: datasetId, name: item.name, text: caption.value });
-          item.caption = caption.value;
-        } catch (error) {
-          setTrainStatus(error.message, true);
-        }
-      });
       const tools = document.createElement("div");
       const remove = document.createElement("button");
       remove.type = "button";
@@ -1775,44 +1761,131 @@ function setupTraining() {
       });
       tools.className = "train-card-tools";
       tools.append(remove);
-      card.append(frame, caption, tools);
+      card.append(frame, tools);
       grid.appendChild(card);
     });
     paintPlan();
   }
 
-  function chip(label, onRemove) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = `${label} ×`;
-    button.addEventListener("click", onRemove);
-    return button;
+  function imageUrl(name) {
+    return `/api/train/image?dataset=${encodeURIComponent(datasetId)}&name=${encodeURIComponent(name)}`;
+  }
+
+  function tagChip(label, count, handlers) {
+    const chip = document.createElement("span");
+    chip.className = "tag-chip";
+    const text = document.createElement("span");
+    text.textContent = count ? `${label}(${count})` : label;
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "tag-edit";
+    edit.setAttribute("aria-label", "タグを直す");
+    edit.textContent = "✎";
+    edit.addEventListener("click", () => {
+      const input = document.createElement("input");
+      input.value = label;
+      input.maxLength = 80;
+      chip.replaceChildren(input);
+      input.focus();
+      let done = false;
+      const commit = () => {
+        if (done) return;
+        done = true;
+        const value = input.value.trim();
+        if (value && value.toLowerCase() !== label.toLowerCase()) handlers.onRename(value);
+        else paintTagDetail();
+      };
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") commit();
+        if (event.key === "Escape") {
+          done = true;
+          paintTagDetail();
+        }
+      });
+      input.addEventListener("blur", commit);
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.setAttribute("aria-label", "タグを外す");
+    remove.textContent = "×";
+    remove.addEventListener("click", handlers.onRemove);
+    chip.append(text, edit, remove);
+    return chip;
   }
 
   function paintTagDetail() {
     const row = imageRows.find((item) => item.name === tagName);
+    if (!row) return;
+    tagImage.src = imageUrl(row.name);
     tagOwn.replaceChildren();
-    splitTags(row ? row.caption : "").forEach((tag) => {
-      tagOwn.append(chip(tag, () => changeTag({ name: tagName, action: "remove", tag })));
+    splitTags(row.caption).forEach((tag) => {
+      tagOwn.append(tagChip(tag, 0, {
+        onRemove: () => changeTag({ name: tagName, action: "remove", tag }),
+        onRename: (next) => changeTag({ name: tagName, action: "replace", tag, next }),
+      }));
     });
     const counts = new Map();
     imageRows.forEach((item) => {
-      new Set(splitTags(item.caption).map((tag) => tag.toLowerCase())).forEach((key) => {
-        const shown = splitTags(item.caption).find((tag) => tag.toLowerCase() === key) || key;
-        counts.set(key, { label: shown, count: (counts.get(key)?.count || 0) + 1 });
+      const seen = new Set();
+      splitTags(item.caption).forEach((tag) => {
+        const key = tag.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        const current = counts.get(key) || { label: tag, count: 0 };
+        current.count += 1;
+        counts.set(key, current);
       });
     });
     tagAll.replaceChildren();
-    [...counts.values()].sort((a, b) => b.count - a.count).forEach((item) => {
-      tagAll.append(chip(`${item.label} (${item.count})`, () => changeTag({ action: "remove", tag: item.label })));
+    [...counts.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)).forEach((item) => {
+      tagAll.append(tagChip(item.label, item.count, {
+        onRemove: () => changeTag({ action: "remove", tag: item.label }),
+        onRename: (next) => changeTag({ action: "replace", tag: item.label, next }),
+      }));
+    });
+    const film = document.querySelector("#tag-film");
+    film.replaceChildren();
+    imageRows.forEach((item) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "tag-thumb";
+      button.setAttribute("aria-pressed", item.name === tagName ? "true" : "false");
+      button.setAttribute("aria-label", "この画像のタグを見る");
+      const photo = document.createElement("img");
+      photo.alt = "";
+      photo.src = imageUrl(item.name);
+      button.append(photo);
+      button.addEventListener("click", () => openTagDetail(item.name));
+      film.append(button);
     });
   }
 
+  function rewriteTags(tags, change) {
+    const key = change.tag.toLowerCase();
+    if (change.action === "remove") return tags.filter((tag) => tag.toLowerCase() !== key);
+    if (change.action === "replace") {
+      const next = String(change.next || "").trim();
+      if (!next || next.length > 80) throw new Error("タグは 1〜80 文字にしてください。");
+      return tags.map((tag) => (tag.toLowerCase() === key ? next : tag));
+    }
+    const next = tags.filter((tag) => tag.toLowerCase() !== key);
+    if (change.place === "start") next.unshift(change.tag);
+    else next.push(change.tag);
+    return next;
+  }
+
   async function changeTag(change) {
+    const targets = change.name ? imageRows.filter((item) => item.name === change.name) : imageRows.slice();
+    if (!targets.length) return;
     try {
-      const saved = await trainPost("/api/train/tags", { dataset: datasetId, ...change });
-      renderImages(saved.images || []);
-      paintTagDetail();
+      for (const row of targets) {
+        const text = rewriteTags(splitTags(row.caption), change).join(", ");
+        if (text === String(row.caption || "").trim()) continue;
+        await trainPost("/api/train/caption", { dataset: datasetId, name: row.name, text });
+        row.caption = text;
+      }
+      renderImages(imageRows);
+      if (tagDialog.open) paintTagDetail();
     } catch (error) {
       setTrainStatus(error.message, true);
     }
@@ -1820,9 +1893,15 @@ function setupTraining() {
 
   function openTagDetail(name) {
     tagName = name;
-    tagImage.src = `/api/train/image?dataset=${encodeURIComponent(datasetId)}&name=${encodeURIComponent(name)}`;
     paintTagDetail();
-    tagDialog.showModal();
+    if (!tagDialog.open) tagDialog.showModal();
+  }
+
+  function stepTag(delta) {
+    const index = imageRows.findIndex((item) => item.name === tagName);
+    if (index < 0 || !imageRows.length) return;
+    const next = imageRows[(index + delta + imageRows.length) % imageRows.length];
+    openTagDetail(next.name);
   }
 
   function paintPlan() {
@@ -1921,14 +2000,15 @@ function setupTraining() {
       if (data.dataset) datasetId = data.dataset;
       stopButton.hidden = !running;
       startButton.disabled = running;
-      const total = Number(data.total) || 0;
-      const step = Number(data.step) || 0;
-      progress.hidden = !running;
-      progressBar.style.width = total > 0 ? `${Math.min(100, Math.round((step / total) * 100))}%` : "0%";
-      paintResults(data.candidates, data.dataset, data.state);
+      progress.hidden = true;
+      results.hidden = true;
+      keepNote.hidden = true;
+      keepButton.hidden = true;
       if (running) {
+        const total = Number(data.total) || 0;
+        const step = Number(data.step) || 0;
         const loss = data.loss == null ? "" : ` 誤差 ${data.loss}`;
-        const text = `${data.message || "学習中です。"} ${step}/${total}${loss}`;
+        const text = `${data.message || "学習中です。"} ${step}/${total}${loss} 進みと見本は、開いたタブに出ます。`;
         setTrainStatus(text, false);
         statusLine.textContent = text;
         setTimeout(pollTrain, 2000);
@@ -1936,8 +2016,9 @@ function setupTraining() {
         setTrainStatus(data.message || "", data.state === "error");
       } else if (data.state === "done" && !seenDone) {
         seenDone = true;
-        setTrainStatus(data.message || "見本ができました。残したいカードを選んで保存してください。", false);
-        statusLine.textContent = data.message || "見本ができました。残したいカードを選んで保存してください。";
+        const text = "見本ができました。開いたタブで残すカードを選んで保存してください。";
+        setTrainStatus(text, false);
+        statusLine.textContent = text;
       } else if (data.state === "done") {
         setTrainStatus(data.message || "", false);
       }
@@ -2137,23 +2218,251 @@ function setupTraining() {
   });
   document.querySelector("#tag-detail-close").addEventListener("click", () => tagDialog.close());
   document.querySelector("#tag-detail-scrim").addEventListener("click", () => tagDialog.close());
-  document.querySelector("#tag-own-add").addEventListener("click", () => {
-    const tag = tagOwnInput.value.trim();
+  document.querySelector("#tag-prev").addEventListener("click", () => stepTag(-1));
+  document.querySelector("#tag-next").addEventListener("click", () => stepTag(1));
+  const tagInput = document.querySelector("#tag-input");
+  const addSharedTag = (place) => {
+    const tag = tagInput.value.trim();
     if (!tag) return;
-    tagOwnInput.value = "";
-    changeTag({ name: tagName, action: "add", tag });
-  });
-  document.querySelector("#tag-all-add").addEventListener("click", () => {
-    const tag = tagAllInput.value.trim();
-    if (!tag) return;
-    tagAllInput.value = "";
-    changeTag({ action: "add", tag });
+    tagInput.value = "";
+    changeTag({ action: "add", tag, place });
+  };
+  document.querySelector("#tag-add-front").addEventListener("click", () => addSharedTag("start"));
+  document.querySelector("#tag-add-end").addEventListener("click", () => addSharedTag("end"));
+  tagInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") addSharedTag("end");
   });
   resolutionInput.addEventListener("change", () => {
     const text = cropText();
     grid.querySelectorAll(".train-crop").forEach((badge) => { badge.textContent = text; });
   });
-  if (location.pathname === "/lora") {
+  function setupWatch() {
+    document.body.classList.add("lora-page", "lora-watch");
+    document.title = "学習の進み · Atelier R";
+    const root = document.querySelector("#train-watch");
+    root.hidden = false;
+    const title = document.querySelector("#watch-title");
+    const eta = document.querySelector("#watch-eta");
+    const bar = document.querySelector("#watch-progress-bar");
+    const meta = document.querySelector("#watch-meta");
+    const stop = document.querySelector("#watch-stop");
+    const count = document.querySelector("#watch-count");
+    const cards = document.querySelector("#watch-cards");
+    const all = document.querySelector("#watch-all");
+    const pickedLabel = document.querySelector("#watch-picked");
+    const keep = document.querySelector("#watch-keep");
+    const sample = document.querySelector("#watch-sample");
+    const chosen = new Set();
+    let clock = 0;
+    let clockStep = 0;
+    let known = null;
+    let latest = null;
+    let ticking = false;
+
+    function clockText(seconds) {
+      const whole = Math.max(0, Math.round(seconds));
+      return [Math.floor(whole / 3600), Math.floor((whole % 3600) / 60), whole % 60]
+        .map((part) => String(part).padStart(2, "0"))
+        .join(":");
+    }
+
+    function paintChosen() {
+      const boxes = [...cards.querySelectorAll("input[type=checkbox]")];
+      pickedLabel.textContent = `選択済み ${chosen.size}`;
+      all.checked = boxes.length > 0 && boxes.every((box) => box.checked);
+      keep.disabled = chosen.size === 0;
+    }
+
+    function paintSample(data, candidates) {
+      const shown = [...candidates].reverse().find((item) => item.preview);
+      const key = shown ? `${data.dataset}:${shown.preview}` : "";
+      if (sample.dataset.key === key) return;
+      sample.dataset.key = key;
+      sample.replaceChildren();
+      if (!shown || !data.dataset) {
+        const empty = document.createElement("p");
+        empty.className = "watch-empty";
+        empty.textContent = "現在サンプル画像はありません";
+        sample.append(empty);
+        return;
+      }
+      const photo = document.createElement("img");
+      photo.alt = "見本";
+      photo.src = `/api/train/preview?dataset=${encodeURIComponent(data.dataset)}&name=${encodeURIComponent(shown.preview)}`;
+      const caption = document.createElement("p");
+      caption.className = "watch-caption";
+      const index = candidates.findIndex((item) => item.file === shown.file) + 1;
+      const loss = data.loss == null ? "" : ` loss: ${data.loss}`;
+      const prompt = known?.preview_prompt || "";
+      caption.textContent = `LoRA ${index} step: ${data.step || 0}${loss}${prompt ? ` ${prompt}` : ""}`;
+      sample.append(photo, caption);
+    }
+
+    function paintCards(data) {
+      const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+      const epochs = Math.max(1, Number(known?.epochs) || candidates.length || 1);
+      const running = data.state === "running";
+      const done = candidates.length;
+      count.textContent = `LoRA ${Math.min(done, epochs)}/${epochs}`;
+      [...chosen].forEach((file) => {
+        if (!candidates.some((item) => item.file === file)) chosen.delete(file);
+      });
+      const slots = candidates.slice();
+      if (running && done < epochs) slots.push(null);
+      const shape = `${data.state}|${slots.map((item) => (item ? item.file : "progress")).join(",")}`;
+      const total = Number(data.total) || 0;
+      const step = Number(data.step) || 0;
+      const per = epochs ? total / epochs : 0;
+      const ratio = per > 0 ? Math.max(0, Math.min(1, (step - done * per) / per)) : 0;
+      if (cards.dataset.shape !== shape) {
+        cards.dataset.shape = shape;
+        cards.replaceChildren();
+        slots.forEach((item, index) => {
+          const card = document.createElement("article");
+          card.className = "watch-card";
+          if (item && item.preview && data.dataset) {
+            const box = document.createElement("input");
+            box.type = "checkbox";
+            box.className = "watch-check";
+            box.dataset.file = item.file;
+            box.checked = chosen.has(item.file);
+            box.disabled = running;
+            box.addEventListener("change", () => {
+              if (box.checked) chosen.add(item.file);
+              else chosen.delete(item.file);
+              paintChosen();
+            });
+            const photo = document.createElement("img");
+            photo.alt = "";
+            photo.src = `/api/train/preview?dataset=${encodeURIComponent(data.dataset)}&name=${encodeURIComponent(item.preview)}`;
+            const band = document.createElement("span");
+            band.className = "watch-band";
+            band.textContent = `LoRA ${index + 1}`;
+            card.append(box, photo, band);
+          } else if (item) {
+            const wait = document.createElement("div");
+            wait.className = "train-result-wait";
+            wait.textContent = "見本は描けませんでした";
+            card.append(wait);
+          } else {
+            const ring = document.createElement("div");
+            ring.className = "watch-ring";
+            const label = document.createElement("span");
+            label.textContent = "0%";
+            ring.append(label);
+            card.append(ring);
+          }
+          cards.append(card);
+        });
+      }
+      const ring = cards.querySelector(".watch-ring");
+      if (ring) {
+        ring.style.setProperty("--p", `${Math.round(ratio * 100)}%`);
+        ring.querySelector("span").textContent = `${Math.round(ratio * 100)}%`;
+      }
+      keep.hidden = running || data.state !== "done" || !candidates.length;
+      paintChosen();
+      paintSample(data, candidates);
+    }
+
+    async function refresh() {
+      if (ticking) return;
+      ticking = true;
+      try {
+        const response = await fetch("/api/train/status");
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || "進みを確認できませんでした。");
+        latest = data;
+        if (data.dataset && known?.id !== data.dataset) {
+          const view = await fetch(`/api/train/dataset?id=${encodeURIComponent(data.dataset)}`);
+          const body = await view.json().catch(() => ({}));
+          if (view.ok) known = body;
+        }
+        const running = data.state === "running";
+        const total = Number(data.total) || 0;
+        const step = Number(data.step) || 0;
+        const percent = total > 0 ? Math.min(100, Math.round((step / total) * 100)) : 0;
+        bar.style.width = running || data.state === "done" ? `${percent}%` : "0%";
+        stop.hidden = !running;
+        if (running) {
+          if (!clock || step < clockStep) {
+            clock = Date.now();
+            clockStep = step;
+          }
+          const gained = step - clockStep;
+          const elapsed = (Date.now() - clock) / 1000;
+          title.textContent = step > 0 ? "トレーニング中" : "お待ちください...";
+          eta.textContent = gained > 0 && total > step
+            ? `完了までの推定時間 ${clockText((total - step) / (gained / elapsed))}`
+            : "";
+          const epochs = Math.max(1, Number(known?.epochs) || 1);
+          const epoch = Math.min(epochs, (data.candidates || []).length + 1);
+          const loss = data.loss == null ? "" : ` Loss: ${data.loss}`;
+          meta.textContent = total ? `Steps: ${step}/${total} (${percent}%)${loss} Epoch: ${epoch}/${epochs}` : (data.message || "");
+        } else if (data.state === "done") {
+          title.textContent = "トレーニング完了";
+          eta.textContent = "";
+          meta.textContent = data.message || "残したいカードを選んで保存してください。";
+        } else if (data.state === "stopped") {
+          title.textContent = "トレーニングを停止しました";
+          eta.textContent = "";
+          meta.textContent = data.message || "";
+        } else if (data.state === "error") {
+          title.textContent = "トレーニングが止まりました";
+          eta.textContent = "";
+          meta.textContent = data.message || "";
+        } else {
+          title.textContent = "学習は始まっていません";
+          eta.textContent = "";
+          meta.textContent = "学習を始めると、ここに進みと見本が出ます。";
+        }
+        paintCards(data);
+      } catch (error) {
+        title.textContent = "進みを確認できませんでした";
+        meta.textContent = error.message || "";
+      } finally {
+        ticking = false;
+      }
+    }
+
+    all.addEventListener("change", () => {
+      cards.querySelectorAll("input[type=checkbox]").forEach((box) => {
+        box.checked = all.checked;
+        if (all.checked) chosen.add(box.dataset.file);
+        else chosen.delete(box.dataset.file);
+      });
+      paintChosen();
+    });
+    stop.addEventListener("click", async () => {
+      try {
+        await trainPost("/api/train/stop", {});
+        title.textContent = "学習を止めています";
+      } catch (error) {
+        meta.textContent = error.message;
+      }
+    });
+    keep.addEventListener("click", async () => {
+      if (!chosen.size || !latest?.dataset) return;
+      if (!window.confirm(`選んだ ${chosen.size} 個を保存します。選んでいないものは消えます。`)) return;
+      keep.disabled = true;
+      try {
+        const saved = await trainPost("/api/train/keep", { dataset: latest.dataset, files: [...chosen] });
+        chosen.clear();
+        cards.dataset.shape = "";
+        sample.dataset.key = "";
+        title.textContent = `${(saved.saved || []).length} 個保存しました。`;
+        await refresh();
+      } catch (error) {
+        meta.textContent = error.message;
+        keep.disabled = false;
+      }
+    });
+    const loop = () => refresh().finally(() => setTimeout(loop, 2000));
+    loop();
+  }
+
+  const watchPage = location.pathname === "/lora" && new URLSearchParams(location.search).get("watch") === "1";
+  if (location.pathname === "/lora" && !watchPage) {
     document.body.classList.add("lora-page");
     document.title = "LoRA · Atelier R";
     home.setAttribute("open", "");
@@ -2162,6 +2471,7 @@ function setupTraining() {
       historyBoard.textContent = error.message;
     });
   }
+  if (watchPage) setupWatch();
   document.querySelector("#train-close").addEventListener("click", () => dialog.close());
   document.querySelector("#train-scrim").addEventListener("click", () => dialog.close());
   document.querySelectorAll(".train-goal .choice").forEach((button) => {
@@ -2213,6 +2523,7 @@ function setupTraining() {
     }
   });
   startButton.addEventListener("click", async () => {
+    const watchTab = window.open("about:blank", "atelier-watch");
     startButton.disabled = true;
     setTrainStatus("学習を始めています。", false);
     try {
@@ -2220,7 +2531,6 @@ function setupTraining() {
       if ((saved.images || []).length < 5) throw new Error("画像は 5 枚以上にしてください。");
       seenDone = false;
       picked.clear();
-      paintResults([], "", "running");
       await trainPost("/api/train/start", {
         dataset: saved.id,
         checkpoint: checkpointInput.value,
@@ -2234,8 +2544,16 @@ function setupTraining() {
         preview_prompt: previewInput.value.trim(),
         output: `${triggerInput.value.trim() || "lora"}_${goal}`,
       });
+      if (watchTab) {
+        watchTab.location = `/lora?watch=1&t=${Date.now()}`;
+        watchTab.focus();
+        setTrainStatus("学習を始めました。進みは新しいタブに出ます。", false);
+      } else {
+        setTrainStatus("進みのタブを開けませんでした。ブラウザでポップアップを許可してください。", true);
+      }
       pollTrain();
     } catch (error) {
+      if (watchTab && !watchTab.closed) watchTab.close();
       setTrainStatus(error.message, true);
       startButton.disabled = false;
     }

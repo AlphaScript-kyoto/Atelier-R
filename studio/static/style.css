@@ -1453,7 +1453,8 @@ body.lora-page #tool-rail,
 body.lora-page #select-tools,
 body.lora-page #sheet-scrim,
 body.lora-page #composer,
-body.lora-page #gallery { display: none; }
+body.lora-page #gallery,
+body.lora-page main { display: none; }
 body.lora-page dialog#lora-home[open] {
   display: block;
   position: fixed;
@@ -1520,21 +1521,91 @@ body.lora-page #lora-home-close { display: none; }
 .task-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .task-table th, .task-table td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; }
 .task-wrap { overflow: auto; }
-.tag-panel { width: min(980px, calc(100vw - 48px)); height: auto; max-height: calc(100vh - 48px); }
-.tag-layout { display: grid; grid-template-columns: minmax(220px, 320px) minmax(0, 1fr); gap: 16px; overflow: auto; }
-.tag-layout img { width: 100%; border-radius: 12px; background: #0c0e13; }
-.tag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
-.tag-chips button {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: #12151c;
-  color: var(--text);
-  padding: 4px 8px;
+.tag-panel { width: min(1120px, calc(100vw - 32px)); height: auto; max-height: calc(100vh - 32px); }
+.tag-layout { display: grid; grid-template-columns: minmax(280px, 460px) minmax(0, 1fr); gap: 18px; overflow: auto; }
+.tag-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 360px;
+  padding: 28px 48px;
+  border-radius: 16px;
+  background: #10131a;
+}
+.tag-stage img { max-width: 100%; max-height: 420px; border-radius: 8px; background: #0c0e13; }
+.tag-nav {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(8, 10, 16, 0.72);
+  color: #fff;
+  font-size: 24px;
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+.tag-nav-next { left: auto; right: 8px; }
+.tag-film { display: flex; gap: 8px; overflow: auto; margin-top: 12px; padding-bottom: 4px; }
+.tag-thumb {
+  flex: 0 0 64px;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: #0c0e13;
   cursor: pointer;
 }
-.tag-add { display: flex; gap: 8px; margin-bottom: 16px; }
-.tag-add input { flex: 1; margin: 0; }
-.train-card textarea { min-height: 72px; padding: 8px; font-size: 12px; }
+.tag-thumb[aria-pressed="true"] { border-color: #7ec8ff; }
+.tag-thumb img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; }
+.tag-side { display: flex; flex-direction: column; min-width: 0; max-height: calc(100vh - 150px); }
+.tag-box {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #12151c;
+}
+.tag-box:last-child { display: flex; flex-direction: column; min-height: 0; flex: 1; margin-bottom: 0; }
+.tag-box:last-child .tag-chips { overflow: auto; }
+.tag-box h3 { margin: 0 0 8px; font-size: 14px; }
+.tag-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 28px; }
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #1a1e28;
+  color: var(--text);
+  padding: 4px 6px 4px 8px;
+  font-size: 13px;
+}
+.tag-chip button {
+  border: 0;
+  background: transparent;
+  color: #c9c6d6;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.tag-chip input { width: 120px; margin: 0; padding: 2px 6px; }
+.tag-add { margin-top: 10px; }
+.tag-add input { width: 100%; margin: 0; }
+.tag-add-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.tag-add-actions button {
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+#tag-add-front { background: #1aa7c9; }
+#tag-add-end { background: #2f6bff; }
+.train-card textarea { display: none; }
 .train-card-tools { display: flex; justify-content: flex-end; }
 .train-card-tools button, .train-actions button {
   border: 1px solid var(--line);
@@ -1595,7 +1666,7 @@ body.lora-page #lora-home-close { display: none; }
   text-align: center;
 }
 .train-result strong { font-size: 13px; line-height: 1.35; }
-#train-keep {
+#train-keep, #watch-keep {
   margin-top: 12px;
   padding: 8px 12px;
   border: 1px solid var(--accent);
@@ -1605,6 +1676,115 @@ body.lora-page #lora-home-close { display: none; }
   font-weight: 700;
   cursor: pointer;
 }
+#train-watch[hidden], #watch-stop[hidden], #watch-keep[hidden] { display: none; }
+body.lora-watch { display: block; background: #0c0e13; }
+body.lora-watch #train-watch {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
+  padding: 16px 20px 20px;
+  gap: 14px;
+  color: var(--text);
+}
+.watch-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; }
+.watch-title-row { display: flex; gap: 12px; align-items: baseline; }
+.watch-title-row strong { font-size: 16px; }
+#watch-eta { color: #b7b3c7; font-size: 13px; }
+.watch-bar-row { display: grid; grid-template-columns: minmax(160px, 1fr) auto; gap: 12px; align-items: center; margin-top: 8px; }
+#watch-progress { margin: 0; height: 12px; background: #1c2230; }
+#watch-progress div { background: linear-gradient(90deg, #3d8bff, #2ee6c7); }
+#watch-meta { margin: 0; color: #d5d2e2; font-size: 13px; white-space: nowrap; }
+#watch-stop {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #171b24;
+  color: var(--text);
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.watch-layout { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.75fr); gap: 14px; min-height: 0; }
+.watch-main, .watch-sample {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #141820;
+}
+.watch-sample h2 { margin: 0 0 12px; font-size: 15px; }
+.watch-cards { display: flex; flex-wrap: wrap; gap: 12px; align-content: flex-start; margin-top: 14px; overflow: auto; }
+.watch-card {
+  position: relative;
+  width: 168px;
+  border-radius: 12px;
+  background: #0e1118;
+  overflow: hidden;
+}
+.watch-card img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; }
+.watch-ring {
+  width: 96px;
+  height: 96px;
+  margin: 42px auto 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: conic-gradient(#5aa7ff var(--p), #2a3142 0);
+}
+.watch-ring span {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #141820;
+  font-weight: 700;
+}
+.watch-check {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 1;
+  width: auto;
+  margin: 0;
+}
+.watch-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 6px 8px;
+  background: rgba(8, 10, 16, 0.62);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.watch-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: auto; padding-top: 12px; }
+.watch-foot .check-line { margin: 0; }
+.watch-sample-view {
+  position: relative;
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 240px;
+  border-radius: 12px;
+  background: #10141c;
+  overflow: hidden;
+}
+.watch-sample-view img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.watch-caption {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(8, 10, 16, 0.55);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.watch-empty { margin: 0; color: #8d8a9b; text-align: center; }
 @media (max-width: 800px) {
   dialog#train[open] {
     position: fixed;
@@ -1622,6 +1802,8 @@ body.lora-page #lora-home-close { display: none; }
     max-height: 100dvh;
     padding: calc(12px + env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom));
   }
-  .train-layout { grid-template-columns: 1fr; overflow: auto; }
+  .train-layout, .tag-layout, .watch-layout, .watch-bar-row, .watch-top { grid-template-columns: 1fr; }
   .train-settings { grid-template-columns: 1fr; }
+  #watch-meta { white-space: normal; }
+  body.lora-watch #train-watch { height: auto; min-height: 100vh; }
 }
