@@ -202,8 +202,11 @@
               <option value="32">しっかり</option>
             </select>
           </label>
-          <label>1枚あたりの繰り返し
+          <label>繰り返し
             <input id="train-repeats" type="number" min="5" max="80" step="1" value="20">
+          </label>
+          <label>エポック
+            <input id="train-epochs" type="number" min="1" max="10" step="1" value="1">
           </label>
           <label>解像度
             <select id="train-resolution">
@@ -212,7 +215,7 @@
             </select>
           </label>
         </div>
-        <p class="hint">繰り返しは、1枚の画像を何回見せるかです。30回にしても、できる LoRA は1つです。画面下の 120/450 のような数字は、枚数×繰り返しの進み具合です。同時に学習できるのも1つです。</p>
+        <p class="hint" id="train-plan">繰り返し20 × エポック1。画像を入れると、枚数を掛けた回数が学習回数です。LoRAは1個できます。同時に学習できるのは1つです。</p>
         <div class="section-head">
           <span class="label">画像</span>
           <label class="file-button">画像を追加<input id="train-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label>

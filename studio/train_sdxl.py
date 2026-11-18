@@ -125,7 +125,10 @@ def train(job_path: Path) -> None:
     resolution = int(job["resolution"])
     rank = int(job["rank"])
     repeats = int(job["repeats"])
-    total = len(images) * repeats
+    epochs = max(1, int(job.get("epochs") or 1))
+    per_epoch = len(images) * repeats
+    total = per_epoch * epochs
+    outputs = [Path(item) for item in job.get("outputs") or [job["output"]]]
     report(progress, state="running", step=0, total=total, message="画像エンジンがメモリを空けるのを待っています。")
     # ComfyUI がモデルを下ろすのを待つ。待たないと 16GB では足りない。
     time.sleep(4)
@@ -185,63 +188,70 @@ def train(job_path: Path) -> None:
     optimizer = torch.optim.AdamW(params, lr=1e-4, weight_decay=0.01)
     report(progress, state="running", step=0, total=total, message="学習を始めています。")
     losses = []
-    for step in range(1, total + 1):
-        latent, embeds, pooled, time_ids = random.choice(cached)
-        latent = latent.to(device=device, dtype=torch.float32)
-        noise = torch.randn_like(latent)
-        timestep = torch.randint(0, scheduler.config.num_train_timesteps, (1,), device=device).long()
-        noisy = scheduler.add_noise(latent, noise, timestep)
-        if prediction_type == "v_prediction":
-            target = scheduler.get_velocity(latent, noise, timestep)
-        else:
-            target = noise
-        with torch.autocast(device_type="cuda", dtype=dtype):
-            pred = unet(
-                noisy.to(dtype),
-                timestep,
-                embeds.to(device=device, dtype=dtype),
-                added_cond_kwargs={
-                    "text_embeds": pooled.to(device=device, dtype=dtype),
-                    "time_ids": time_ids.to(device=device, dtype=dtype),
-                },
-            ).sample
-            loss = F.mse_loss(pred.float(), target.float())
-        if not torch.isfinite(loss):
-            raise RuntimeError("損失が数にならなくなりました。枚数を減らすか、解像度を 768 にしてください。")
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(params, 1.0)
-        optimizer.step()
-        losses.append(float(loss.detach().cpu()))
-        if step == 1 or step % 5 == 0 or step == total:
-            average = sum(losses[-20:]) / len(losses[-20:])
-            report(
-                progress,
-                state="running",
-                step=step,
-                total=total,
-                loss=round(average, 4),
-                message=f"学習中です（{step}/{total}）。",
-            )
-    output = Path(job["output"])
-    report(progress, state="running", step=total, total=total, message="LoRA を保存しています。")
-    save_lora(
-        unet,
-        names,
-        output,
-        rank,
-        {
-            "ss_base_model_version": "sdxl_base_v1.0",
-            "modelspec.architecture": "stable-diffusion-xl-v1-base/lora",
-            "modelspec.predict_key": prediction_type,
-            "atelier_trigger": job.get("trigger") or "",
-            "atelier_name": job.get("name") or output.stem,
-            "atelier_goal": job.get("goal") or "",
-            "ss_network_dim": rank,
-            "ss_network_alpha": rank,
-        },
-    )
-    report(progress, state="done", step=total, total=total, message="学習が終わりました。")
+    step = 0
+    for epoch in range(1, epochs + 1):
+        for _ in range(per_epoch):
+            step += 1
+            latent, embeds, pooled, time_ids = random.choice(cached)
+            latent = latent.to(device=device, dtype=torch.float32)
+            noise = torch.randn_like(latent)
+            timestep = torch.randint(0, scheduler.config.num_train_timesteps, (1,), device=device).long()
+            noisy = scheduler.add_noise(latent, noise, timestep)
+            if prediction_type == "v_prediction":
+                target = scheduler.get_velocity(latent, noise, timestep)
+            else:
+                target = noise
+            with torch.autocast(device_type="cuda", dtype=dtype):
+                pred = unet(
+                    noisy.to(dtype),
+                    timestep,
+                    embeds.to(device=device, dtype=dtype),
+                    added_cond_kwargs={
+                        "text_embeds": pooled.to(device=device, dtype=dtype),
+                        "time_ids": time_ids.to(device=device, dtype=dtype),
+                    },
+                ).sample
+                loss = F.mse_loss(pred.float(), target.float())
+            if not torch.isfinite(loss):
+                raise RuntimeError("損失が数にならなくなりました。枚数を減らすか、解像度を 768 にしてください。")
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(params, 1.0)
+            optimizer.step()
+            losses.append(float(loss.detach().cpu()))
+            if step == 1 or step % 5 == 0 or step == total:
+                average = sum(losses[-20:]) / len(losses[-20:])
+                report(
+                    progress,
+                    state="running",
+                    step=step,
+                    total=total,
+                    loss=round(average, 4),
+                    message=f"学習中です（エポック {epoch}/{epochs}、{step}/{total}）。",
+                )
+        output = outputs[epoch - 1] if epoch - 1 < len(outputs) else outputs[-1]
+        label = job.get("name") or output.stem
+        if epochs > 1:
+            label = f"{label} {epoch}/{epochs}"
+        report(progress, state="running", step=step, total=total, message=f"エポック {epoch}/{epochs} の LoRA を保存しています。")
+        save_lora(
+            unet,
+            names,
+            output,
+            rank,
+            {
+                "ss_base_model_version": "sdxl_base_v1.0",
+                "modelspec.architecture": "stable-diffusion-xl-v1-base/lora",
+                "modelspec.predict_key": prediction_type,
+                "atelier_trigger": job.get("trigger") or "",
+                "atelier_name": label,
+                "atelier_goal": job.get("goal") or "",
+                "ss_network_dim": rank,
+                "ss_network_alpha": rank,
+                "ss_epoch": epoch,
+            },
+        )
+    report(progress, state="done", step=total, total=total, message=f"学習が終わりました。LoRA が {epochs} 個できました。")
 
 
 def main() -> None:

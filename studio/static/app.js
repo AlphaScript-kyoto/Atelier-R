@@ -1602,7 +1602,9 @@ function setupTraining() {
   const checkpointInput = document.querySelector("#train-checkpoint");
   const rankInput = document.querySelector("#train-rank");
   const repeatsInput = document.querySelector("#train-repeats");
+  const epochInput = document.querySelector("#train-epochs");
   const resolutionInput = document.querySelector("#train-resolution");
+  const plan = document.querySelector("#train-plan");
   const fileInput = document.querySelector("#train-files");
   const grid = document.querySelector("#train-grid");
   const note = document.querySelector("#train-goal-note");
@@ -1704,6 +1706,7 @@ function setupTraining() {
         try {
           await trainPost("/api/train/delete-image", { dataset: datasetId, name: item.name });
           card.remove();
+          paintPlan();
         } catch (error) {
           setTrainStatus(error.message, true);
         }
@@ -1715,6 +1718,18 @@ function setupTraining() {
       card.append(photo, side);
       grid.appendChild(card);
     });
+    paintPlan();
+  }
+
+  function paintPlan() {
+    const images = grid.querySelectorAll(".train-card").length;
+    const repeats = Number(repeatsInput.value) || 0;
+    const epochs = Number(epochInput.value) || 0;
+    const steps = images * repeats * epochs;
+    const files = `LoRAは${epochs}個できます。`;
+    plan.textContent = images
+      ? `${images}枚 × 繰り返し${repeats} × エポック${epochs} = ${steps}回。${files}同時に学習できるのは1つです。`
+      : `繰り返し${repeats} × エポック${epochs}。画像を入れると、枚数を掛けた回数が学習回数です。${files}同時に学習できるのは1つです。`;
   }
 
   async function ensureDataset() {
@@ -1834,6 +1849,7 @@ function setupTraining() {
         name: nameInput.value.trim() || triggerInput.value.trim(),
         rank: Number(rankInput.value),
         repeats: Number(repeatsInput.value),
+        epochs: Number(epochInput.value),
         resolution: Number(resolutionInput.value),
         output: `${triggerInput.value.trim() || "lora"}_${goal}`,
       });
@@ -1851,6 +1867,8 @@ function setupTraining() {
       setTrainStatus(error.message, true);
     }
   });
+  repeatsInput.addEventListener("input", paintPlan);
+  epochInput.addEventListener("input", paintPlan);
   paintGoal();
   pollTrain();
 }

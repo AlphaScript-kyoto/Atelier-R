@@ -192,10 +192,20 @@ def _safe_output_name(name: str) -> str:
 
 def _output_path(name: str) -> Path:
     LORA_DIR.mkdir(parents=True, exist_ok=True)
-    path = LORA_DIR / _safe_output_name(name)
-    if path.exists():
-        raise ValueError("同じ名前の LoRA が既にあります。名前を変えてください。")
-    return path
+    return LORA_DIR / _safe_output_name(name)
+
+
+def _epoch_outputs(name: str, epochs: int) -> list[Path]:
+    """エポックが1なら1ファイル。2以上なら、周ごとに1つ残す。"""
+    base = _output_path(name)
+    if epochs == 1:
+        paths = [base]
+    else:
+        paths = [base.with_name(f"{base.stem}_e{index:02d}.safetensors") for index in range(1, epochs + 1)]
+    existing = [path.name for path in paths if path.exists()]
+    if existing:
+        raise ValueError("同じ名前の LoRA が既にあります。呼び方を変えてください。")
+    return paths
 
 
 def job_status() -> dict:
@@ -300,24 +310,28 @@ def start_training(spec: dict) -> dict:
     try:
         rank = int(spec.get("rank") or 16)
         repeats = int(spec.get("repeats") or 20)
+        epochs = int(spec.get("epochs") or 1)
         resolution = int(spec.get("resolution") or 768)
     except (TypeError, ValueError) as error:
         raise ValueError("学習の設定を確認してください。") from error
-    if rank not in {4, 8, 16, 32} or not 5 <= repeats <= 80 or resolution not in {768, 1024}:
+    if rank not in {4, 8, 16, 32} or not 5 <= repeats <= 80 or not 1 <= epochs <= 10 or resolution not in {768, 1024}:
         raise ValueError("学習の設定を確認してください。")
     trigger = str(spec.get("trigger") or "").strip()
     if not trigger or len(trigger) > 40 or any(char in trigger for char in "\r\n"):
         raise ValueError("呼び方は 1〜40 文字にしてください。")
     name = str(spec.get("name") or trigger).strip()[:40]
     output = _output_path(str(spec.get("output") or f"{trigger}_{goal}"))
+    outputs = _epoch_outputs(output.name, epochs)
     _write_meta(folder, {"name": name, "goal": goal, "trigger": trigger})
     progress = folder / "progress.json"
     job = {
         "dataset": dataset_id,
         "checkpoint": str(checkpoint),
-        "output": str(output),
+        "output": str(outputs[-1]),
+        "outputs": [str(path) for path in outputs],
         "rank": rank,
         "repeats": repeats,
+        "epochs": epochs,
         "resolution": resolution,
         "goal": goal,
         "trigger": trigger,
@@ -325,7 +339,7 @@ def start_training(spec: dict) -> dict:
         "progress": str(progress),
     }
     (folder / "job.json").write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
-    _set_job(state="running", message="学習の準備をしています。", step=0, total=len(images) * repeats, loss=None, log=[])
+    _set_job(state="running", message="学習の準備をしています。", step=0, total=len(images) * repeats * epochs, loss=None, log=[])
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
@@ -344,7 +358,7 @@ def start_training(spec: dict) -> dict:
     preview = str(folder / images[0]["name"])
     threading.Thread(
         target=_watch,
-        args=(process, progress, {"output": output.name, "preview": preview, "trigger": trigger}),
+        args=(process, progress, {"outputs": [path.name for path in outputs], "preview": preview, "trigger": trigger}),
         daemon=True,
     ).start()
     return job_status()

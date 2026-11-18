@@ -2965,21 +2965,23 @@ def main() -> None:
 
 if __name__ == "__main__":
     def _remember_trained_lora(info: dict) -> None:
-        output = str(info.get("output") or "")
+        names = info.get("outputs") or ([info["output"]] if info.get("output") else [])
         preview = Path(str(info.get("preview") or ""))
-        if not output or not preview.is_file():
+        if not names or not preview.is_file():
             return
         data = preview.read_bytes()
-        for _ in range(5):
-            try:
-                save_model_card("loras", output, "", data)
-                return
-            except ValueError:
-                time.sleep(1)
-            except Exception as error:
-                print(f"学習した LoRA のサムネイルを付けられませんでした: {error}", flush=True)
-                return
-        print("学習した LoRA は保存しました。サムネイルは、一覧のカードから後で入れられます。", flush=True)
+        for output in names:
+            for _ in range(5):
+                try:
+                    save_model_card("loras", str(output), "", data)
+                    break
+                except ValueError:
+                    time.sleep(1)
+                except Exception as error:
+                    print(f"学習した LoRA のサムネイルを付けられませんでした: {error}", flush=True)
+                    break
+            else:
+                print(f"{output} は保存しました。サムネイルは、一覧のカードから後で入れられます。", flush=True)
 
     train_api.set_on_done(_remember_trained_lora)
     os.chdir(ROOT)
