@@ -20,6 +20,7 @@ agent_token.txt
 # 学習用の画像と、タグ付けモデル。この PC にだけ置く
 datasets/
 studio/tagger/
+studio/lora_use_counts.json
 
 # Tailscale の許可ルールの控え。この PC にだけ置く
 tailscale-policy-backup.json

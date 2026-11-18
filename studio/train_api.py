@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -71,6 +72,27 @@ def _image_rows(folder: Path) -> list[dict]:
     return rows
 
 
+def _read_json(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _job_settings(folder: Path) -> dict:
+    job = _read_json(folder / "job.json")
+    checkpoint = str(job.get("checkpoint") or "")
+    return {
+        "rank": job.get("rank") or 8,
+        "repeats": job.get("repeats") or 20,
+        "epochs": job.get("epochs") or 1,
+        "resolution": job.get("resolution") or 768,
+        "preview_prompt": str(job.get("preview_prompt") or ""),
+        "checkpoint": Path(checkpoint).name if checkpoint else "",
+    }
+
+
 def dataset_view(dataset_id: str) -> dict:
     folder = dataset_dir(dataset_id)
     meta = _read_meta(folder)
@@ -80,6 +102,7 @@ def dataset_view(dataset_id: str) -> dict:
         "goal": str(meta.get("goal") or "style"),
         "trigger": str(meta.get("trigger") or ""),
         "images": _image_rows(folder),
+        **_job_settings(folder),
     }
 
 
@@ -147,6 +170,39 @@ def write_caption(dataset_id: str, name: str, text: str) -> None:
     if len(text) > 2000:
         raise ValueError("説明が長すぎます。")
     path.with_suffix(".txt").write_text(text.strip(), encoding="utf-8")
+
+
+def _tag_list(text: str) -> list[str]:
+    return [part.strip() for part in text.split(",") if part.strip()]
+
+
+def _clean_tag(tag: str) -> str:
+    text = " ".join(str(tag or "").replace(",", " ").split())
+    if not text or len(text) > 80 or any(char in text for char in "\r\n"):
+        raise ValueError("タグは 1〜80 文字にしてください。")
+    return text
+
+
+def edit_tags(dataset_id: str, *, name: str, action: str, tag: str) -> dict:
+    """1枚、または全部の画像へ、タグを足すか外す。"""
+    if action not in {"add", "remove"}:
+        raise ValueError("タグの操作を確認してください。")
+    text = _clean_tag(tag)
+    folder = dataset_dir(dataset_id)
+    rows = _image_rows(folder)
+    if name:
+        rows = [row for row in rows if row["name"] == name]
+        if not rows:
+            raise ValueError("画像が見つかりません。")
+    for row in rows:
+        tags = _tag_list(row["caption"])
+        keys = {item.lower() for item in tags}
+        if action == "add" and text.lower() not in keys:
+            tags.append(text)
+        if action == "remove":
+            tags = [item for item in tags if item.lower() != text.lower()]
+        (folder / row["name"]).with_suffix(".txt").write_text(", ".join(tags), encoding="utf-8")
+    return dataset_view(dataset_id)
 
 
 def delete_image(dataset_id: str, name: str) -> None:
@@ -282,9 +338,11 @@ def _watch(process: subprocess.Popen, progress_path: Path, done_info: dict) -> N
             if saved.get("message") and "\ufffd" not in str(saved.get("message")):
                 message = str(saved["message"])
         _set_job(state="done", message=message)
+        finish_run(progress_path.parent.name, "done", message)
         return
     if code < 0 or _job.get("state") == "stopped":
         _set_job(state="stopped", message="学習を止めました。")
+        finish_run(progress_path.parent.name, "stopped", "学習を止めました。")
         return
     message = "学習が止まりました。黒い画面の最後の行を確認してください。"
     if progress_path.is_file():
@@ -295,6 +353,7 @@ def _watch(process: subprocess.Popen, progress_path: Path, done_info: dict) -> N
         except (OSError, json.JSONDecodeError):
             pass
     _set_job(state="error", message=message)
+    finish_run(progress_path.parent.name, "error", message)
 
 
 def start_training(spec: dict) -> dict:
@@ -352,6 +411,7 @@ def start_training(spec: dict) -> dict:
         "progress": str(progress),
     }
     (folder / "job.json").write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
+    remember_run(folder, len(images))
     _set_job(
         state="running",
         message="学習の準備をしています。",
@@ -383,6 +443,109 @@ def start_training(spec: dict) -> dict:
         daemon=True,
     ).start()
     return job_status()
+
+
+def _dataset_folders() -> list[Path]:
+    if not DATASETS.is_dir():
+        return []
+    folders = []
+    for folder in DATASETS.iterdir():
+        if folder.is_dir() and re.fullmatch(r"[a-f0-9]{8}", folder.name):
+            folders.append(folder)
+    return folders
+
+
+def _read_runs(folder: Path) -> list[dict]:
+    try:
+        data = json.loads((folder / "runs.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def _write_runs(folder: Path, runs: list[dict]) -> None:
+    (folder / "runs.json").write_text(json.dumps(runs[-40:], ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def remember_run(folder: Path, images: int) -> None:
+    job = _read_json(folder / "job.json")
+    meta = _read_meta(folder)
+    runs = _read_runs(folder)
+    runs.append({
+        "name": str(job.get("name") or meta.get("name") or "無題"),
+        "dataset": folder.name,
+        "images": images,
+        "checkpoint": Path(str(job.get("checkpoint") or "")).name,
+        "repeats": job.get("repeats") or 0,
+        "epochs": job.get("epochs") or 1,
+        "state": "running",
+        "message": "学習中です。",
+        "started": time.time(),
+    })
+    _write_runs(folder, runs)
+
+
+def finish_run(dataset_id: str, state: str, message: str) -> None:
+    try:
+        folder = dataset_dir(dataset_id)
+    except ValueError:
+        return
+    runs = _read_runs(folder)
+    if not runs:
+        return
+    runs[-1]["state"] = state
+    runs[-1]["message"] = message[:200]
+    runs[-1]["finished"] = time.time()
+    _write_runs(folder, runs)
+
+
+def list_history() -> list[dict]:
+    rows = []
+    for folder in _dataset_folders():
+        images = _image_rows(folder)
+        meta = _read_meta(folder)
+        progress = _read_json(folder / "progress.json")
+        rows.append({
+            "id": folder.name,
+            "name": str(meta.get("name") or "無題"),
+            "goal": str(meta.get("goal") or ""),
+            "trigger": str(meta.get("trigger") or ""),
+            "images": len(images),
+            "cover": images[0]["name"] if images else "",
+            "updated": int(folder.stat().st_mtime),
+            "state": str(progress.get("state") or ""),
+        })
+    rows.sort(key=lambda item: item["updated"], reverse=True)
+    return rows
+
+
+def list_tasks() -> list[dict]:
+    rows = []
+    for folder in _dataset_folders():
+        runs = _read_runs(folder)
+        if not runs and (folder / "job.json").is_file():
+            job = _read_json(folder / "job.json")
+            progress = _read_json(folder / "progress.json")
+            meta = _read_meta(folder)
+            runs = [{
+                "name": str(job.get("name") or meta.get("name") or "無題"),
+                "dataset": folder.name,
+                "images": len(_image_rows(folder)),
+                "checkpoint": Path(str(job.get("checkpoint") or "")).name,
+                "repeats": job.get("repeats") or 0,
+                "epochs": job.get("epochs") or 1,
+                "state": str(progress.get("state") or "done"),
+                "message": str(progress.get("message") or ""),
+                "started": (folder / "job.json").stat().st_mtime,
+            }]
+        for run in runs:
+            item = dict(run)
+            item["dataset"] = folder.name
+            rows.append(item)
+    rows.sort(key=lambda item: float(item.get("started") or 0), reverse=True)
+    return rows
 
 
 def preview_file(dataset_id: str, name: str) -> Path:

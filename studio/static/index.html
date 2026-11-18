@@ -172,6 +172,51 @@
       </div>
     </form>
   </dialog>
+  <dialog id="lora-home">
+    <button id="lora-home-scrim" type="button" aria-label="閉じる"></button>
+    <div class="picker-panel train-panel">
+      <div class="picker-head">
+        <div class="lora-tabs" role="tablist">
+          <button type="button" class="choice" data-lora-tab="history" aria-pressed="true">トレーニング</button>
+          <button type="button" class="choice" data-lora-tab="tasks" aria-pressed="false">タスク</button>
+          <button type="button" class="choice" data-lora-tab="loras" aria-pressed="false">LoRA</button>
+        </div>
+        <button id="lora-home-close" type="button">閉じる</button>
+      </div>
+      <div class="train-body">
+        <div id="lora-history" class="lora-board"></div>
+        <div id="lora-tasks" class="lora-board" hidden></div>
+        <div id="lora-made" class="lora-board" hidden></div>
+      </div>
+    </div>
+  </dialog>
+  <dialog id="tag-detail">
+    <button id="tag-detail-scrim" type="button" aria-label="閉じる"></button>
+    <div class="picker-panel tag-panel">
+      <div class="picker-head">
+        <h2>画像のタグ</h2>
+        <button id="tag-detail-close" type="button">閉じる</button>
+      </div>
+      <div class="tag-layout">
+        <img id="tag-detail-image" alt="">
+        <div>
+          <h3>この画像のタグ</h3>
+          <div id="tag-own" class="tag-chips"></div>
+          <div class="tag-add">
+            <input id="tag-own-input" type="text" maxlength="80" placeholder="タグを追加">
+            <button id="tag-own-add" type="button">追加</button>
+          </div>
+          <h3>すべての画像に追加または削除するタグ</h3>
+          <p class="hint">ここに出したタグは、学習用の画像全部に足せます。× を押すと、全部の画像から外れます。</p>
+          <div id="tag-all" class="tag-chips"></div>
+          <div class="tag-add">
+            <input id="tag-all-input" type="text" maxlength="80" placeholder="全部の画像に足すタグ">
+            <button id="tag-all-add" type="button">全部に追加</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </dialog>
   <dialog id="train">
     <button id="train-scrim" type="button" aria-label="閉じる"></button>
     <div class="picker-panel train-panel">

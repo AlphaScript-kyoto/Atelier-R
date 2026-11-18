@@ -538,6 +538,128 @@ def positive_text(raw: bytes) -> str:
     return ""
 
 
+_LORA_IN_PROMPT = re.compile(rb'"lora_name"\s*:\s*"([^"\\]{1,180})"')
+_LORA_COUNT_PATH = Path(__file__).resolve().parent / "lora_use_counts.json"
+_lora_count_cache: dict = {"stamp": None, "counts": {}, "scanning": False}
+_lora_count_lock = threading.Lock()
+
+
+def lora_names_in_png(path: Path) -> set[str]:
+    found: set[str] = set()
+    try:
+        with path.open("rb") as handle:
+            if handle.read(8) != b"\x89PNG\r\n\x1a\n":
+                return found
+            while True:
+                header = handle.read(8)
+                if len(header) < 8:
+                    return found
+                length, kind = struct.unpack(">I4s", header)
+                if length > 20_000_000:
+                    return found
+                if kind == b"tEXt":
+                    chunk = handle.read(length)
+                    handle.read(4)
+                    if len(chunk) != length:
+                        return found
+                    key, _, value = chunk.partition(b"\x00")
+                    if key == b"prompt":
+                        for match in _LORA_IN_PROMPT.findall(value):
+                            found.add(match.decode("utf-8", "replace"))
+                    continue
+                if kind == b"IEND":
+                    return found
+                handle.seek(length + 4, os.SEEK_CUR)
+    except OSError:
+        return found
+    return found
+
+
+def _output_stamp() -> tuple[int, int]:
+    if not OUTPUT_DIR.is_dir():
+        return (0, 0)
+    files = [path for path in OUTPUT_DIR.glob("studio_*.png") if not path.name.startswith("studio_expand_")]
+    newest = max((path.stat().st_mtime for path in files), default=0)
+    return (len(files), int(newest))
+
+
+def _scan_lora_uses(stamp: tuple[int, int]) -> None:
+    counts: dict[str, int] = {}
+    if OUTPUT_DIR.is_dir():
+        for path in OUTPUT_DIR.glob("studio_*.png"):
+            if path.name.startswith("studio_expand_"):
+                continue
+            for name in lora_names_in_png(path):
+                counts[name] = counts.get(name, 0) + 1
+    payload = {"count": stamp[0], "newest": stamp[1], "counts": counts}
+    try:
+        _LORA_COUNT_PATH.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+    with _lora_count_lock:
+        _lora_count_cache["stamp"] = stamp
+        _lora_count_cache["counts"] = counts
+        _lora_count_cache["scanning"] = False
+
+
+def lora_use_counts() -> dict[str, int]:
+    """生成した絵のうち、その LoRA を使った枚数。集計は裏で行い、画面は待たせない。"""
+    stamp = _output_stamp()
+    with _lora_count_lock:
+        if _lora_count_cache.get("stamp") == stamp:
+            return dict(_lora_count_cache["counts"])
+        counts = dict(_lora_count_cache["counts"])
+        scanning = bool(_lora_count_cache.get("scanning"))
+        if not counts and _LORA_COUNT_PATH.is_file():
+            try:
+                saved = json.loads(_LORA_COUNT_PATH.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                saved = {}
+            if isinstance(saved, dict) and isinstance(saved.get("counts"), dict):
+                counts = {str(key): int(value) for key, value in saved["counts"].items() if isinstance(value, int)}
+                _lora_count_cache["counts"] = counts
+                if (saved.get("count"), saved.get("newest")) == stamp:
+                    _lora_count_cache["stamp"] = stamp
+                    return dict(counts)
+        if not scanning:
+            _lora_count_cache["scanning"] = True
+            threading.Thread(target=_scan_lora_uses, args=(stamp,), daemon=True).start()
+    return counts
+
+
+def atelier_loras() -> list[dict]:
+    """この画面で学習して保存した LoRA だけを、使った枚数つきで返す。"""
+    counts = lora_use_counts()
+    cards = read_cards()
+    seen: set[str] = set()
+    found = []
+    folders = model_folders("loras") or [ROOT / "models" / "loras"]
+    for folder in folders:
+        folder_path = Path(folder)
+        if not folder_path.is_dir():
+            continue
+        for path in sorted(folder_path.glob("*.safetensors")):
+            if path.name in seen:
+                continue
+            seen.add(path.name)
+            header = read_safetensors_header(path)
+            meta = header.get("__metadata__") if isinstance(header, dict) else {}
+            if not isinstance(meta, dict):
+                meta = {}
+            if not meta.get("atelier_name") and not meta.get("atelier_trigger"):
+                continue
+            found.append({
+                "id": path.name,
+                "name": str(meta.get("atelier_name") or path.stem),
+                "trigger": str(meta.get("atelier_trigger") or ""),
+                "uses": counts.get(path.name, 0),
+                **card_fields(cards, "loras", path.name),
+                **base_fields("loras", path.name),
+            })
+    found.sort(key=lambda item: item["name"])
+    return found
+
+
 def positive_prompt_in_png(path: Path) -> str:
     try:
         with path.open("rb") as handle:
@@ -2335,6 +2457,12 @@ class StudioHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/image":
             self.send_image(urllib.parse.parse_qs(parsed.query))
             return
+        if parsed.path == "/api/train/history":
+            if not self.from_studio_get():
+                self.send_json({"error": "この操作は Atelier R の画面からだけ受け付けます。"}, status=403)
+                return
+            self.send_json({"datasets": train_api.list_history(), "tasks": train_api.list_tasks(), "loras": atelier_loras()})
+            return
         if parsed.path == "/api/train/status":
             if not self.from_studio_get():
                 self.send_json({"error": "この操作は Atelier R の画面からだけ受け付けます。"}, status=403)
@@ -2583,6 +2711,22 @@ class StudioHandler(BaseHTTPRequestHandler):
             except Exception as error:
                 print(f"自動タグ付けに失敗しました: {error}", flush=True)
                 self.send_json({"error": "自動の説明を付けられませんでした。通信を確認してもう一度押してください。"}, status=500)
+                return
+            self.send_json(saved)
+            return
+        if path == "/api/train/tags":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                saved = train_api.edit_tags(
+                    str(body.get("dataset") or ""),
+                    name=str(body.get("name") or ""),
+                    action=str(body.get("action") or ""),
+                    tag=str(body.get("tag") or ""),
+                )
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
                 return
             self.send_json(saved)
             return

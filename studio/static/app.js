@@ -1623,6 +1623,18 @@ function setupTraining() {
   const keepButton = document.querySelector("#train-keep");
   const keepNote = document.querySelector("#train-keep-note");
   const picked = new Set();
+  const home = document.querySelector("#lora-home");
+  const historyBoard = document.querySelector("#lora-history");
+  const taskBoard = document.querySelector("#lora-tasks");
+  const madeBoard = document.querySelector("#lora-made");
+  const tagDialog = document.querySelector("#tag-detail");
+  const tagImage = document.querySelector("#tag-detail-image");
+  const tagOwn = document.querySelector("#tag-own");
+  const tagAll = document.querySelector("#tag-all");
+  const tagOwnInput = document.querySelector("#tag-own-input");
+  const tagAllInput = document.querySelector("#tag-all-input");
+  let imageRows = [];
+  let tagName = "";
   const notes = {
     style: "画風を覚えます。タグには、写っている人や物を残します。画風そのものは書かないので、呼び方の方に残ります。",
     character: "キャラクターを覚えます。髪や目のタグを外すと、その特徴は呼び方に結び付きます。",
@@ -1687,31 +1699,55 @@ function setupTraining() {
     });
   }
 
+  function splitTags(text) {
+    return String(text || "").split(",").map((part) => part.trim()).filter(Boolean);
+  }
+
+  function cropText() {
+    const size = resolutionInput.value || "768";
+    return `${size}×${size}`;
+  }
+
   function renderImages(images) {
+    imageRows = images || [];
     grid.replaceChildren();
-    images.forEach((item) => {
+    imageRows.forEach((item) => {
       const card = document.createElement("article");
       card.className = "train-card";
+      const frame = document.createElement("div");
+      frame.className = "train-photo";
       const photo = document.createElement("img");
       photo.alt = "";
       photo.src = `/api/train/image?dataset=${encodeURIComponent(datasetId)}&name=${encodeURIComponent(item.name)}`;
-      const tools = document.createElement("div");
+      const crop = document.createElement("span");
+      crop.className = "train-crop";
+      crop.textContent = cropText();
+      const info = document.createElement("button");
+      info.type = "button";
+      info.className = "train-info";
+      info.textContent = "i";
+      info.setAttribute("aria-label", "タグを見る");
+      info.addEventListener("click", () => openTagDetail(item.name));
+      frame.append(photo, crop, info);
       const caption = document.createElement("textarea");
       caption.value = item.caption || "";
       caption.placeholder = "自動で付けるか、自分で書きます";
       caption.addEventListener("change", async () => {
         try {
           await trainPost("/api/train/caption", { dataset: datasetId, name: item.name, text: caption.value });
+          item.caption = caption.value;
         } catch (error) {
           setTrainStatus(error.message, true);
         }
       });
+      const tools = document.createElement("div");
       const remove = document.createElement("button");
       remove.type = "button";
       remove.textContent = "外す";
       remove.addEventListener("click", async () => {
         try {
           await trainPost("/api/train/delete-image", { dataset: datasetId, name: item.name });
+          imageRows = imageRows.filter((row) => row.name !== item.name);
           card.remove();
           paintPlan();
         } catch (error) {
@@ -1720,12 +1756,54 @@ function setupTraining() {
       });
       tools.className = "train-card-tools";
       tools.append(remove);
-      const side = document.createElement("div");
-      side.append(caption, tools);
-      card.append(photo, side);
+      card.append(frame, caption, tools);
       grid.appendChild(card);
     });
     paintPlan();
+  }
+
+  function chip(label, onRemove) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `${label} ×`;
+    button.addEventListener("click", onRemove);
+    return button;
+  }
+
+  function paintTagDetail() {
+    const row = imageRows.find((item) => item.name === tagName);
+    tagOwn.replaceChildren();
+    splitTags(row ? row.caption : "").forEach((tag) => {
+      tagOwn.append(chip(tag, () => changeTag({ name: tagName, action: "remove", tag })));
+    });
+    const counts = new Map();
+    imageRows.forEach((item) => {
+      new Set(splitTags(item.caption).map((tag) => tag.toLowerCase())).forEach((key) => {
+        const shown = splitTags(item.caption).find((tag) => tag.toLowerCase() === key) || key;
+        counts.set(key, { label: shown, count: (counts.get(key)?.count || 0) + 1 });
+      });
+    });
+    tagAll.replaceChildren();
+    [...counts.values()].sort((a, b) => b.count - a.count).forEach((item) => {
+      tagAll.append(chip(`${item.label} (${item.count})`, () => changeTag({ action: "remove", tag: item.label })));
+    });
+  }
+
+  async function changeTag(change) {
+    try {
+      const saved = await trainPost("/api/train/tags", { dataset: datasetId, ...change });
+      renderImages(saved.images || []);
+      paintTagDetail();
+    } catch (error) {
+      setTrainStatus(error.message, true);
+    }
+  }
+
+  function openTagDetail(name) {
+    tagName = name;
+    tagImage.src = `/api/train/image?dataset=${encodeURIComponent(datasetId)}&name=${encodeURIComponent(name)}`;
+    paintTagDetail();
+    tagDialog.showModal();
   }
 
   function paintPlan() {
@@ -1849,16 +1927,221 @@ function setupTraining() {
     }
   }
 
-  const trainOpen = document.querySelector("#train-open");
-  const setTrainOpen = (open) => trainOpen.setAttribute("aria-pressed", open ? "true" : "false");
-  trainOpen.addEventListener("click", () => {
+  function showLoraTab(name) {
+    historyBoard.hidden = name !== "history";
+    taskBoard.hidden = name !== "tasks";
+    madeBoard.hidden = name !== "loras";
+    document.querySelectorAll("[data-lora-tab]").forEach((button) => {
+      button.setAttribute("aria-pressed", button.dataset.loraTab === name ? "true" : "false");
+    });
+  }
+
+  function whenText(stamp) {
+    const time = Number(stamp);
+    if (!time) return "";
+    return new Date(time * 1000).toLocaleString("ja-JP");
+  }
+
+  const stateLabel = { running: "学習中", done: "完了", error: "失敗", stopped: "中止" };
+
+  async function loadLoraHome() {
+    const response = await fetch("/api/train/history");
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "履歴を読めませんでした。");
+    historyBoard.replaceChildren();
+    const board = document.createElement("div");
+    board.className = "history-grid";
+    const fresh = document.createElement("button");
+    fresh.type = "button";
+    fresh.className = "history-new";
+    fresh.textContent = "新しく学習する";
+    fresh.addEventListener("click", () => openFreshTraining());
+    board.append(fresh);
+    (data.datasets || []).forEach((item) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "history-card";
+      if (item.cover) {
+        const photo = document.createElement("img");
+        photo.alt = "";
+        photo.src = `/api/train/image?dataset=${encodeURIComponent(item.id)}&name=${encodeURIComponent(item.cover)}`;
+        card.append(photo);
+      }
+      const title = document.createElement("strong");
+      title.textContent = item.name || "無題";
+      const meta = document.createElement("span");
+      meta.className = "hint";
+      meta.textContent = `${item.images || 0}枚 · ${whenText(item.updated)}`;
+      card.append(title, meta);
+      card.addEventListener("click", () => openSavedTraining(item.id).catch((error) => setTrainStatus(error.message, true)));
+      board.append(card);
+    });
+    historyBoard.append(board);
+    const tableWrap = document.createElement("div");
+    tableWrap.className = "task-wrap";
+    const table = document.createElement("table");
+    table.className = "task-table";
+    table.innerHTML = "<thead><tr><th>トレーニング名</th><th>枚数</th><th>状態</th><th>繰り返し</th><th>エポック</th><th>基礎モデル</th><th>更新</th></tr></thead>";
+    const body = document.createElement("tbody");
+    (data.tasks || []).forEach((item) => {
+      const row = document.createElement("tr");
+      [item.name || "無題", `${item.images || 0}枚`, stateLabel[item.state] || "未学習", item.repeats || "", item.epochs || "", item.checkpoint || "", whenText(item.finished || item.started)].forEach((text) => {
+        const cell = document.createElement("td");
+        cell.textContent = text;
+        row.append(cell);
+      });
+      row.style.cursor = "pointer";
+      row.addEventListener("click", () => openSavedTraining(item.dataset).catch((error) => setTrainStatus(error.message, true)));
+      body.append(row);
+    });
+    table.append(body);
+    tableWrap.append(table);
+    taskBoard.replaceChildren(tableWrap);
+    const made = document.createElement("div");
+    made.className = "made-grid";
+    (data.loras || []).forEach((item) => {
+      const card = document.createElement("article");
+      card.className = "made-card";
+      const frame = document.createElement("div");
+      frame.className = "made-photo";
+      if (item.preview) {
+        const photo = document.createElement("img");
+        photo.alt = "";
+        photo.src = item.preview;
+        frame.append(photo);
+      } else {
+        const blank = document.createElement("div");
+        blank.className = "train-result-wait";
+        blank.textContent = "見本なし";
+        frame.append(blank);
+      }
+      const band = document.createElement("span");
+      band.className = "made-band";
+      band.textContent = `${item.uses || 0}枚`;
+      const create = document.createElement("button");
+      create.type = "button";
+      create.className = "made-create";
+      create.textContent = "創作";
+      create.addEventListener("click", () => useMadeLora(item));
+      frame.append(band, create);
+      const title = document.createElement("strong");
+      title.textContent = item.name || item.id;
+      card.append(frame, title);
+      made.append(card);
+    });
+    if (!(data.loras || []).length) {
+      const empty = document.createElement("p");
+      empty.className = "hint";
+      empty.textContent = "まだ、この画面で保存した LoRA はありません。";
+      madeBoard.replaceChildren(empty);
+    } else {
+      madeBoard.replaceChildren(made);
+    }
+  }
+
+  function useMadeLora(item) {
+    const known = loraById(item.id);
+    if (known && !loraFits(known)) {
+      statusLine.classList.add("error");
+      statusLine.textContent = "今の基礎モデルでは、この LoRA は使えません。";
+      return;
+    }
+    if (!selectedLoras.some((entry) => entry.id === item.id)) {
+      if (selectedLoras.length >= MAX_LORAS) selectedLoras.shift();
+      selectedLoras.push({ id: item.id, strength: 1 });
+    }
+    renderLoraStack();
+    paintTriggers();
+    home.close();
+    dialog.close();
+    statusLine.classList.remove("error");
+    statusLine.textContent = `${item.name || "LoRA"} を選びました。`;
+    promptBox.focus();
+  }
+
+  function openFreshTraining() {
+    datasetId = "";
+    delete triggerInput.dataset.touched;
+    nameInput.value = "";
+    previewInput.value = "";
+    imageRows = [];
     fillCheckpoints();
     paintGoal();
+    renderImages([]);
+    setTrainStatus("", false);
     dialog.showModal();
-    setTrainOpen(true);
     pollTrain();
+  }
+
+  async function openSavedTraining(id) {
+    fillCheckpoints();
+    const response = await fetch(`/api/train/dataset?id=${encodeURIComponent(id)}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "学習を開けませんでした。");
+    datasetId = data.id;
+    nameInput.value = data.name || "";
+    triggerInput.value = data.trigger || "";
+    triggerInput.dataset.touched = "1";
+    goal = data.goal || "style";
+    paintGoal();
+    triggerInput.value = data.trigger || triggerInput.value;
+    if (data.rank) rankInput.value = String(data.rank);
+    if (data.repeats) repeatsInput.value = String(data.repeats);
+    if (data.epochs) epochInput.value = String(data.epochs);
+    if (data.resolution) resolutionInput.value = String(data.resolution);
+    if (data.preview_prompt) previewInput.value = data.preview_prompt;
+    if (data.checkpoint && [...checkpointInput.options].some((option) => option.value === data.checkpoint)) {
+      checkpointInput.value = data.checkpoint;
+    }
+    renderImages(data.images || []);
+    paintPlan();
+    setTrainStatus("前の設定を開きました。画像やタグを直して、もう一度学習できます。", false);
+    dialog.showModal();
+    pollTrain();
+  }
+
+  const trainOpen = document.querySelector("#train-open");
+  const setTrainOpen = (open) => trainOpen.setAttribute("aria-pressed", open ? "true" : "false");
+  trainOpen.addEventListener("click", async () => {
+    showLoraTab("history");
+    home.showModal();
+    setTrainOpen(true);
+    try {
+      await loadLoraHome();
+    } catch (error) {
+      historyBoard.textContent = error.message;
+    }
   });
-  dialog.addEventListener("close", () => setTrainOpen(false));
+  dialog.addEventListener("close", () => {
+    if (!home.open) setTrainOpen(false);
+    if (home.open) loadLoraHome().catch(() => {});
+  });
+  home.addEventListener("close", () => {
+    if (!dialog.open) setTrainOpen(false);
+  });
+  document.querySelector("#lora-home-close").addEventListener("click", () => home.close());
+  document.querySelector("#lora-home-scrim").addEventListener("click", () => home.close());
+  document.querySelectorAll("[data-lora-tab]").forEach((button) => {
+    button.addEventListener("click", () => showLoraTab(button.dataset.loraTab));
+  });
+  document.querySelector("#tag-detail-close").addEventListener("click", () => tagDialog.close());
+  document.querySelector("#tag-detail-scrim").addEventListener("click", () => tagDialog.close());
+  document.querySelector("#tag-own-add").addEventListener("click", () => {
+    const tag = tagOwnInput.value.trim();
+    if (!tag) return;
+    tagOwnInput.value = "";
+    changeTag({ name: tagName, action: "add", tag });
+  });
+  document.querySelector("#tag-all-add").addEventListener("click", () => {
+    const tag = tagAllInput.value.trim();
+    if (!tag) return;
+    tagAllInput.value = "";
+    changeTag({ action: "add", tag });
+  });
+  resolutionInput.addEventListener("change", () => {
+    const text = cropText();
+    grid.querySelectorAll(".train-crop").forEach((badge) => { badge.textContent = text; });
+  });
   document.querySelector("#train-close").addEventListener("click", () => dialog.close());
   document.querySelector("#train-scrim").addEventListener("click", () => dialog.close());
   document.querySelectorAll(".train-goal .choice").forEach((button) => {
