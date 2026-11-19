@@ -1254,8 +1254,21 @@ function addSession(images, settings) {
   row.style.setProperty("--count", String(Math.max(images.length, 1)));
   images.forEach((image) => row.append(createFigure(image, settings)));
   section.append(head, row);
-  gallery.prepend(section);
+  gallery.append(section);
   refreshSelectButton();
+  revealLatest();
+}
+
+function revealLatest() {
+  const scroller = document.querySelector("main");
+  const go = () => {
+    if (isPhone() || !scroller) {
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+      return;
+    }
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+  };
+  requestAnimationFrame(go);
 }
 
 function fact(label, value) {
