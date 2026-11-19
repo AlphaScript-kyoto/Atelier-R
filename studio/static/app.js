@@ -1277,7 +1277,7 @@ document.querySelector("#composer").addEventListener("click", (event) => {
 phoneQuery.addEventListener("change", () => setSheet(false));
 document.addEventListener("touchmove", (event) => {
   if (!document.body.classList.contains("scroll-lock")) return;
-  if (event.target.closest(".side, #composer, .detail-side, .detail-layout, #picker-grid")) return;
+  if (event.target.closest(".side, #composer, #sheet-scroll, .detail-side, .detail-layout, #picker-grid, .train-body, .train-layout, .tag-layout, #train-watch, .lora-board, dialog")) return;
   event.preventDefault();
 }, { passive: false });
 

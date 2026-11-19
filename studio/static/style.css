@@ -14,6 +14,7 @@
 * { box-sizing: border-box; }
 
 html, body { height: 100%; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
 body {
   margin: 0;
@@ -1822,5 +1823,44 @@ body.lora-watch #train-watch {
   .train-layout, .tag-layout, .watch-layout, .watch-bar-row, .watch-top { grid-template-columns: 1fr; }
   .train-settings { grid-template-columns: 1fr; }
   #watch-meta { white-space: normal; }
-  body.lora-watch #train-watch { height: auto; min-height: 100vh; }
+  body.lora-watch #train-watch { height: auto; min-height: 100dvh; }
+  body.lora-page { padding: 0; height: 100dvh; overflow: hidden; }
+  body.lora-page #lora-home .picker-panel { height: 100dvh; max-height: 100dvh; }
+  body.lora-page #lora-home .train-body {
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+  }
+  .history-grid, .made-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .history-new { min-height: 120px; font-size: 14px; }
+  .made-card strong, .history-card strong { font-size: 13px; }
+  .made-trigger { grid-template-columns: minmax(0, 1fr) auto; }
+  .made-trigger span { grid-column: 1 / -1; }
+  label, .label { font-size: 12px; margin-bottom: 4px; }
+  dialog#train[open], dialog#tag-detail[open] {
+    overflow: auto;
+    align-content: start;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+  }
+  #train .train-panel, #tag-detail .tag-panel {
+    height: auto;
+    min-height: 100%;
+    max-height: none;
+    overflow: visible;
+  }
+  #train .train-body { flex: none; height: auto; overflow: visible; }
+  #train .train-layout,
+  #tag-detail .tag-layout,
+  #tag-detail .tag-side,
+  #tag-detail .tag-box:last-child .tag-chips {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+  #train .train-params,
+  #train .train-dataset { min-height: min-content; height: auto; overflow: visible; }
+  body.lora-watch { height: auto; overflow: auto; }
 }
