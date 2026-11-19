@@ -298,17 +298,59 @@ function renderExtraWords(words) {
   const items = Array.isArray(words) ? words : [];
   empty.hidden = items.length > 0;
   items.forEach((text) => {
+    const item = document.createElement("span");
+    item.className = "extra-item";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "trigger";
     button.dataset.trigger = text;
-    button.title = text;
-    button.textContent = `${shortLabel(text)} ↑`;
+    button.textContent = text;
     button.addEventListener("click", () => toggleTrigger(text));
-    list.appendChild(button);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "extra-remove";
+    remove.setAttribute("aria-label", "この言葉を一覧から外す");
+    remove.textContent = "×";
+    remove.addEventListener("click", () => saveExtraWord(text, true));
+    item.append(button, remove);
+    list.appendChild(item);
   });
   paintTriggers();
 }
+
+async function saveExtraWord(word, remove) {
+  const note = document.querySelector("#extra-word-note");
+  const input = document.querySelector("#extra-word-input");
+  note.classList.remove("is-error");
+  note.textContent = remove ? "外しています..." : "登録しています...";
+  try {
+    const response = await fetch("/api/extra-words", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(remove ? { word, remove: true } : { word }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "言葉を保存できませんでした。");
+    if (!remove) input.value = "";
+    renderExtraWords(data.extra_words);
+    note.classList.remove("is-error");
+    note.textContent = remove
+      ? "一覧から外しました。描きたい内容に入っている文は、そのまま残ります。"
+      : "1つのボタンとして登録しました。押すと、この言葉がまとめて入ります。";
+  } catch (error) {
+    note.classList.add("is-error");
+    note.textContent = error.message;
+  }
+}
+
+document.querySelector("#extra-word-save").addEventListener("click", () => {
+  saveExtraWord(document.querySelector("#extra-word-input").value, false);
+});
+document.querySelector("#extra-word-input").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  saveExtraWord(document.querySelector("#extra-word-input").value, false);
+});
 
 const checkpointCurrent = document.querySelector("#checkpoint-current");
 const picker = document.querySelector("#picker");

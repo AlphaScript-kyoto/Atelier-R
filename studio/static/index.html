@@ -90,8 +90,13 @@
   </aside>
     <details id="extra-words">
       <summary>追加ワード</summary>
+      <div class="extra-add">
+        <input id="extra-word-input" type="text" maxlength="200" placeholder="追加したい言葉を1つ" autocomplete="off">
+        <button id="extra-word-save" type="button">登録</button>
+      </div>
+      <p id="extra-word-note" class="hint">入力した内容が、登録で1つのボタンになります。カンマが入っていても分かれません。</p>
       <div id="extra-word-list" class="trigger-list"></div>
-      <p id="extra-word-empty" class="hint">まだ言葉がありません。studio/extra_words.txt に 1 行ずつ書いて、画面を更新してください。</p>
+      <p id="extra-word-empty" class="hint">まだ言葉がありません。上の欄に書いて、登録を押してください。</p>
     </details>
     <details id="negative-block">
       <summary>避けたい内容（任意）</summary>

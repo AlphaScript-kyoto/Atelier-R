@@ -37,6 +37,7 @@ EXTRA_WORDS_PATH = Path(__file__).resolve().parent / "extra_words.txt"
 CARDS_PATH = Path(__file__).resolve().parent / "model_cards.json"
 PREVIEW_DIR = STATIC_DIR / "previews"
 _cards_lock = threading.Lock()
+_extra_words_lock = threading.Lock()
 AGENT_TOKEN_PATH = ROOT / "agent_token.txt"
 COMFY_URL = "http://127.0.0.1:8188"
 STUDIO_HOST = "127.0.0.1"
@@ -471,6 +472,62 @@ def read_extra_words() -> list[str]:
         if len(words) >= 300:
             break
     return words
+
+
+def clean_extra_word(word: str) -> str:
+    """入力欄の中身を、改行で割れない1つの言葉にする。"""
+    return " ".join(str(word or "").replace("\u3000", " ").split())
+
+
+def _append_extra_word(word: str) -> None:
+    EXTRA_WORDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    prefix = ""
+    if EXTRA_WORDS_PATH.is_file() and EXTRA_WORDS_PATH.stat().st_size:
+        with EXTRA_WORDS_PATH.open("rb") as handle:
+            handle.seek(-1, os.SEEK_END)
+            if handle.read(1) not in {b"\n", b"\r"}:
+                prefix = "\n"
+    with EXTRA_WORDS_PATH.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(f"{prefix}{word}\n")
+
+
+def _drop_extra_word(word: str) -> None:
+    if not EXTRA_WORDS_PATH.is_file():
+        return
+    kept = []
+    removed = False
+    for line in EXTRA_WORDS_PATH.read_text(encoding="utf-8").splitlines():
+        if not removed and clean_extra_word(line) == word and not line.strip().startswith("#"):
+            removed = True
+            continue
+        kept.append(line)
+    temporary = EXTRA_WORDS_PATH.with_suffix(".txt.saving")
+    temporary.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8", newline="\n")
+    os.replace(temporary, EXTRA_WORDS_PATH)
+
+
+def save_extra_word(word: str, *, remove: bool = False) -> list[str]:
+    cleaned = clean_extra_word(word)
+    if not cleaned:
+        raise ValueError("追加したい言葉を入力してください。")
+    if cleaned.startswith("#"):
+        raise ValueError("＃で始まる言葉は登録できません。")
+    if len(cleaned) > 200:
+        raise ValueError("言葉は200文字までです。")
+    with _extra_words_lock:
+        current = read_extra_words()
+        known = {clean_extra_word(item) for item in current}
+        if remove:
+            if cleaned not in known:
+                raise ValueError("その言葉は一覧にありません。")
+            _drop_extra_word(cleaned)
+        else:
+            if cleaned in known:
+                raise ValueError("その言葉は、すでに1つのボタンになっています。")
+            if len(current) >= 300:
+                raise ValueError("追加ワードは300個までです。")
+            _append_extra_word(cleaned)
+        return read_extra_words()
 
 
 def tag_key(tag: str) -> str:
@@ -2653,6 +2710,20 @@ class StudioHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "文章を読めませんでした。"}, status=400)
                 return
             self.send_json(build_random_prompt(current[:4000], hints, loras))
+            return
+        if path == "/api/extra-words":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                words = save_extra_word(str(body.get("word") or ""), remove=bool(body.get("remove")))
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+                return
+            except OSError:
+                self.send_json({"error": "言葉を保存できませんでした。"}, status=500)
+                return
+            self.send_json({"extra_words": words})
             return
         if path == "/api/model-card":
             fields = self.read_model_card()

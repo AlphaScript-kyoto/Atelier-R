@@ -540,6 +540,33 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 .prompt-block { padding: 28px clamp(20px, 4vw, 56px) 0; }
 #extra-words { margin: 12px clamp(20px, 4vw, 56px) 0; }
+.extra-add { display: flex; gap: 8px; margin-top: 10px; }
+.extra-add input { flex: 1; min-width: 0; margin: 0; }
+.extra-add button {
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.extra-item { display: inline-flex; max-width: 100%; align-items: stretch; }
+.extra-item .trigger {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  border-radius: 10px 0 0 10px;
+}
+.extra-remove {
+  border: 1px solid var(--line);
+  border-left: 0;
+  border-radius: 0 10px 10px 0;
+  background: #1c2030;
+  color: var(--muted);
+  padding: 0 8px;
+  cursor: pointer;
+}
+#extra-word-note.is-error { color: #ffb4b4; }
 #extra-word-list { margin-top: 10px; }
 #negative-block { margin: 12px clamp(20px, 4vw, 56px) 16px; }
 .actions {
