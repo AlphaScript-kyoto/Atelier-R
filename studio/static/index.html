@@ -145,6 +145,31 @@
           </select>
           <button id="detail-expand" type="button">背景を広げて描く</button>
           <p class="hint">似た絵は、今の構図を残して表情や細部を変えた3枚です。背景を広げるときは、今の絵はそのまま、外側だけ描き足します。</p>
+          <h2>仕上げ</h2>
+          <label class="label" for="detail-scale">拡大</label>
+          <select id="detail-scale">
+            <option value="0">しない</option>
+            <option value="2" selected>2倍</option>
+            <option value="3">3倍</option>
+            <option value="4">4倍</option>
+          </select>
+          <label class="label" for="detail-upscale-model">拡大の向き</label>
+          <select id="detail-upscale-model">
+            <option value="anime" selected>イラスト・アニメ</option>
+            <option value="photo">実写・ロゴ・文字</option>
+          </select>
+          <label class="check-line" for="detail-clear">
+            <input id="detail-clear" type="checkbox">
+            選んだ色を透明にする
+          </label>
+          <div id="detail-clear-box" hidden>
+            <label class="label" for="detail-clear-color">透明にする色</label>
+            <input id="detail-clear-color" type="color" value="#ffffff">
+            <label class="label" for="detail-clear-threshold">色の近い範囲 <span id="detail-clear-value">15</span></label>
+            <input id="detail-clear-threshold" type="range" min="0" max="80" value="15">
+          </div>
+          <button id="detail-finish" type="button">仕上げる</button>
+          <p id="detail-finish-note" class="hint">元の絵は残します。新しい PNG が、同じ保存先に足されます。白や単色の背景を抜くときに向いています。</p>
           <h2>生成条件</h2>
           <dl id="detail-facts"></dl>
           <p id="detail-prompt"></p>

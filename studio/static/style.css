@@ -885,14 +885,32 @@ dialog.landscape #detail-image {
   line-height: 1.5;
   white-space: pre-wrap;
 }
-#detail-vary, #detail-expand, #detail-rerun, #detail-folder { display: block; width: 100%; margin-top: 8px; }
-#detail-vary, #detail-expand, #detail-rerun {
+#detail-vary, #detail-expand, #detail-rerun, #detail-folder, #detail-finish { display: block; width: 100%; margin-top: 8px; }
+#detail-vary, #detail-expand, #detail-rerun, #detail-finish {
   background: var(--accent);
   border-color: var(--accent);
   font-weight: 700;
 }
 #detail-expand { background: #2f6f73; border-color: #2f6f73; }
-#detail-vary:disabled, #detail-expand:disabled, #detail-rerun:disabled { opacity: 0.55; cursor: wait; }
+#detail-finish { background: #3d4f8a; border-color: #3d4f8a; }
+#detail-vary:disabled, #detail-expand:disabled, #detail-rerun:disabled, #detail-finish:disabled { opacity: 0.55; cursor: wait; }
+.detail-side .check-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 14px;
+}
+#detail-clear-color {
+  width: 56px;
+  height: 32px;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+#detail-clear-threshold { width: 100%; margin-top: 6px; }
 .detail-side .label { margin-top: 14px; }
 .detail-side .hint { margin: 10px 0 18px; }
 

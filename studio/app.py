@@ -49,6 +49,14 @@ STUDIO_PORT = 8189
 TAILSCALE_IPV4: str | None = None
 TAILSCALE_DNS: str | None = None
 OUTPUT_DIR = COMFY_DIR / "output"
+FINISH_ENGINE = ROOT.parent / "i-upscaling"
+FINISH_EXE = FINISH_ENGINE / "realesrgan-ncnn-vulkan.exe"
+FINISH_MODELS = {
+    "anime": "realesrgan-x4plus-anime",
+    "photo": "realesrgan-x4plus",
+}
+FINISH_MAX_SIDE = 8192
+_finish_lock = threading.Lock()
 CLIENT_ID = str(uuid.uuid4())
 _progress_state: dict[str, dict] = {}
 _stage: dict[str, str] = {}
@@ -2485,6 +2493,159 @@ def cancel_prompt(prompt_id: str) -> dict:
     return {"ok": True, "running": running}
 
 
+def studio_is_drawing() -> bool:
+    try:
+        queue = comfy_json("GET", "/queue", timeout=8)
+    except RuntimeError:
+        return False
+    if not isinstance(queue, dict):
+        return False
+    return bool(queue.get("queue_running") or queue.get("queue_pending"))
+
+
+def parse_finish_color(value: object) -> tuple[int, int, int]:
+    text = str(value or "").strip()
+    if text.startswith("#"):
+        text = text[1:]
+    if len(text) != 6 or any(char not in "0123456789abcdefABCDEF" for char in text):
+        raise ValueError("透明にする色は、カラーピッカーで選んでください。")
+    return tuple(int(text[index:index + 2], 16) for index in (0, 2, 4))
+
+
+def apply_chroma_key(path: Path, color: tuple[int, int, int], threshold: int) -> None:
+    import numpy as np
+    from PIL import Image
+
+    image = Image.open(path).convert("RGBA")
+    pixels = np.array(image)
+    diff = pixels[:, :, :3].astype(np.int16) - np.array(color, dtype=np.int16)
+    distance = np.square(diff).sum(axis=2)
+    limit = threshold * threshold * 3
+    pixels[distance <= limit] = (0, 0, 0, 0)
+    Image.fromarray(pixels, "RGBA").save(path, "PNG")
+
+
+def finish_destination(source: Path, scale: int, clear: bool) -> Path:
+    parts = []
+    if scale:
+        parts.append(f"x{scale}")
+    if clear:
+        parts.append("clear")
+    tag = "_".join(parts)
+    folder = source.parent
+    candidate = folder / f"{source.stem}_{tag}.png"
+    number = 2
+    while candidate.exists():
+        candidate = folder / f"{source.stem}_{tag}_{number}.png"
+        number += 1
+    return candidate
+
+
+def image_payload(path: Path) -> dict:
+    relative = path.relative_to(OUTPUT_DIR.resolve())
+    subfolder = "" if relative.parent.as_posix() == "." else relative.parent.as_posix()
+    query = urllib.parse.urlencode({
+        "filename": path.name,
+        "subfolder": subfolder,
+        "type": "output",
+    })
+    width, height = 0, 0
+    from PIL import Image
+
+    with Image.open(path) as image:
+        width, height = image.size
+    return {
+        "url": "/api/image?" + query,
+        "filename": path.name,
+        "subfolder": subfolder,
+        "path": str(path),
+        "width": width,
+        "height": height,
+    }
+
+
+def finish_output_image(body: object) -> dict:
+    if not isinstance(body, dict):
+        raise ValueError("送信内容を確認してください。")
+    if not _finish_lock.acquire(blocking=False):
+        raise ValueError("いま別の絵を仕上げています。終わるまで待ってください。")
+    try:
+        return run_finish(body)
+    finally:
+        _finish_lock.release()
+
+
+def run_finish(body: dict) -> dict:
+    try:
+        scale = int(body.get("scale") or 0)
+    except (TypeError, ValueError) as error:
+        raise ValueError("拡大倍率を確認してください。") from error
+    if scale not in {0, 2, 3, 4}:
+        raise ValueError("拡大は 2倍、3倍、4倍から選んでください。")
+    clear = bool(body.get("clear"))
+    if scale == 0 and not clear:
+        raise ValueError("拡大か、色を透明にするか、どちらかを選んでください。")
+    model_key = str(body.get("model") or "anime")
+    model_name = FINISH_MODELS.get(model_key)
+    if scale and model_name is None:
+        raise ValueError("拡大の向きを選んでください。")
+    try:
+        threshold = int(body.get("threshold") if body.get("threshold") is not None else 15)
+    except (TypeError, ValueError) as error:
+        raise ValueError("色の近い範囲を確認してください。") from error
+    if threshold < 0 or threshold > 80:
+        raise ValueError("色の近い範囲は 0 から 80 にしてください。")
+    color = parse_finish_color(body.get("color") or "#ffffff") if clear else (255, 255, 255)
+    source = output_image_file(body)[0]
+    from PIL import Image
+
+    with Image.open(source) as image:
+        width, height = image.size
+    if scale and max(width * scale, height * scale) > FINISH_MAX_SIDE:
+        raise ValueError("この絵をその倍率で拡大すると大きすぎます。倍率を下げるか、小さい絵で試してください。")
+    if studio_is_drawing():
+        raise ValueError("いま絵を描いています。描き終わってから、もう一度押してください。")
+    if scale and not FINISH_EXE.is_file():
+        raise ValueError("拡大エンジンが見つかりません。programming フォルダの i-upscaling に realesrgan-ncnn-vulkan.exe があるか確認してください。")
+    destination = finish_destination(source, scale, clear)
+    try:
+        if scale:
+            command = [
+                str(FINISH_EXE),
+                "-i", str(source),
+                "-o", str(destination),
+                "-n", model_name,
+                "-s", str(scale),
+            ]
+            try:
+                subprocess.run(
+                    command,
+                    cwd=str(FINISH_ENGINE),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=True,
+                    timeout=900,
+                )
+            except subprocess.TimeoutExpired as error:
+                raise ValueError("拡大に時間がかかりすぎたので止めました。倍率を下げてもう一度試してください。") from error
+            except subprocess.CalledProcessError as error:
+                detail = (error.stderr or error.stdout or "").strip().splitlines()
+                tail = detail[-1] if detail else "拡大エンジンが止まりました。"
+                raise ValueError(f"拡大できませんでした。{tail[:180]}") from error
+        else:
+            with Image.open(source) as image:
+                image.convert("RGBA").save(destination, "PNG")
+        if clear:
+            apply_chroma_key(destination, color, threshold)
+    except Exception:
+        if destination.is_file() and destination != source:
+            destination.unlink(missing_ok=True)
+        raise
+    return {"ok": True, "image": image_payload(destination)}
+
+
 def delete_output_images(items: object) -> dict:
     if not isinstance(items, list) or not items:
         raise ValueError("削除する絵を選んでください。")
@@ -3047,6 +3208,15 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return
             try:
                 self.send_json(cancel_prompt(str(body.get("prompt_id") or "")))
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+            return
+        if path == "/api/images/finish":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                self.send_json(finish_output_image(body))
             except ValueError as error:
                 self.send_json({"error": str(error)}, status=400)
             return

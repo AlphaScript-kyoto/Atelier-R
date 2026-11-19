@@ -1612,6 +1612,100 @@ function runFromDetail(mode) {
 detailVary.addEventListener("click", () => runFromDetail("vary"));
 detailExpand.addEventListener("click", () => runFromDetail("expand"));
 
+const detailScale = document.querySelector("#detail-scale");
+const detailUpscaleModel = document.querySelector("#detail-upscale-model");
+const detailClear = document.querySelector("#detail-clear");
+const detailClearBox = document.querySelector("#detail-clear-box");
+const detailClearColor = document.querySelector("#detail-clear-color");
+const detailClearThreshold = document.querySelector("#detail-clear-threshold");
+const detailClearValue = document.querySelector("#detail-clear-value");
+const detailFinish = document.querySelector("#detail-finish");
+const detailFinishNote = document.querySelector("#detail-finish-note");
+
+function syncFinishForm() {
+  const scaling = detailScale.value !== "0";
+  detailUpscaleModel.hidden = !scaling;
+  detailUpscaleModel.previousElementSibling.hidden = !scaling;
+  detailClearBox.hidden = !detailClear.checked;
+}
+
+detailScale.addEventListener("change", syncFinishForm);
+detailClear.addEventListener("change", syncFinishForm);
+detailClearThreshold.addEventListener("input", () => {
+  detailClearValue.textContent = detailClearThreshold.value;
+});
+syncFinishForm();
+
+detailFinish.addEventListener("click", async () => {
+  const source = JSON.parse(detail.dataset.source || "{}");
+  if (!source.filename) {
+    detailFinishNote.textContent = "この絵からは仕上げられません。もう一度、一覧の絵を開いてください。";
+    return;
+  }
+  const scale = Number(detailScale.value);
+  const clear = detailClear.checked;
+  if (!scale && !clear) {
+    detailFinishNote.textContent = "拡大か、色を透明にするか、どちらかを選んでください。";
+    return;
+  }
+  detailFinish.disabled = true;
+  detailFinish.textContent = "仕上げています…";
+  detailFinishNote.textContent = scale
+    ? "拡大エンジンを動かしています。大きい絵は少し時間がかかります。"
+    : "選んだ色を透明にしています。";
+  try {
+    const response = await fetch("/api/images/finish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: source.filename,
+        subfolder: source.subfolder || "",
+        scale,
+        model: detailUpscaleModel.value,
+        clear,
+        color: detailClearColor.value,
+        threshold: Number(detailClearThreshold.value),
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = data.error || (response.status === 404
+        ? "仕上げの準備が古い画面のままです。黒い画面で Ctrl + C を押してから、もう一度起動してください。"
+        : "仕上げられませんでした。");
+      throw new Error(message);
+    }
+    const current = detailFigures[detailIndex];
+    const base = current && current.entry ? current.entry.settings : JSON.parse(detail.dataset.settings || "{}");
+    const settings = {
+      ...base,
+      width: data.image.width,
+      height: data.image.height,
+      kindLabel: "仕上げ",
+      created: new Date().toLocaleString("ja-JP"),
+    };
+    const figure = createFigure(data.image, settings);
+    const row = current && current.parentElement;
+    if (row) {
+      row.append(figure);
+      row.style.setProperty("--count", String(row.querySelectorAll("figure").length));
+      const session = current.closest(".session");
+      detailFigures = [...session.querySelectorAll("figure")];
+      detailIndex = detailFigures.indexOf(figure);
+      showDetail();
+    }
+    detailFinishNote.textContent = "できました。元の絵はそのままで、新しい PNG を同じ場所に保存しました。";
+    statusLine.classList.remove("error");
+    statusLine.textContent = "仕上げた絵を保存しました。";
+  } catch (error) {
+    detailFinishNote.textContent = error.message;
+    statusLine.classList.add("error");
+    statusLine.textContent = error.message;
+  } finally {
+    detailFinish.disabled = false;
+    detailFinish.textContent = "仕上げる";
+  }
+});
+
 function applySettings(settings) {
   checkpointSelect.value = settings.checkpoint;
   if (fluxGuidance && settings.guidance !== undefined && settings.guidance !== null) {
