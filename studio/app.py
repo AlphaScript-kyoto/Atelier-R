@@ -705,10 +705,12 @@ def atelier_loras() -> list[dict]:
                 meta = {}
             if not meta.get("atelier_name") and not meta.get("atelier_trigger"):
                 continue
+            triggers = lora_trigger_list(meta)
             found.append({
                 "id": path.name,
                 "name": str(meta.get("atelier_name") or path.stem),
-                "trigger": str(meta.get("atelier_trigger") or ""),
+                "trigger": triggers[0] if triggers else "",
+                "triggers": triggers,
                 "uses": counts.get(path.name, 0),
                 **card_fields(cards, "loras", path.name),
                 **base_fields("loras", path.name),
@@ -717,11 +719,40 @@ def atelier_loras() -> list[dict]:
     return found
 
 
-def set_lora_trigger(name: str, trigger: str) -> dict:
-    """保存済み LoRA の、プロンプトへ入れる呼び方だけを書き換える。"""
-    text = " ".join(str(trigger or "").split())
-    if not text or len(text) > 40 or any(char in text for char in "\r\n,\\"):
-        raise ValueError("呼び方は、カンマのない 1〜40 文字にしてください。")
+def clean_trigger_word(word: str) -> str:
+    return " ".join(str(word or "").replace("\u3000", " ").split())
+
+
+def lora_trigger_list(meta: dict) -> list[str]:
+    """学習で覚えた呼び方を先頭に、あとから登録した呼び方を続ける。"""
+    learned = clean_trigger_word(str(meta.get("atelier_trigger") or ""))
+    extras: list[str] = []
+    raw = meta.get("atelier_triggers") if isinstance(meta, dict) else ""
+    parsed: list = []
+    if isinstance(raw, str) and raw:
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError:
+            loaded = []
+        if isinstance(loaded, list):
+            parsed = loaded
+    seen = {learned.lower()} if learned else set()
+    for item in parsed:
+        text = clean_trigger_word(str(item or ""))
+        if not text or text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        extras.append(text)
+        if len(extras) >= 20:
+            break
+    return ([learned] if learned else []) + extras
+
+
+def change_lora_triggers(name: str, word: str, *, remove: bool = False) -> dict:
+    """保存済み LoRA に、プロンプトへ入れる呼び方を1つ足す。学習した言葉は残す。"""
+    text = clean_trigger_word(word)
+    if not text or len(text) > 80 or any(char in text for char in "\r\n\\"):
+        raise ValueError("呼び方は、1〜80文字で入力してください。")
     if Path(name).name != name or not name.lower().endswith(".safetensors"):
         raise ValueError("LoRA が見つかりません。")
     path = model_file("loras", name)
@@ -730,9 +761,25 @@ def set_lora_trigger(name: str, trigger: str) -> dict:
     header = read_safetensors_header(path)
     meta = header.get("__metadata__") if isinstance(header, dict) else None
     if not isinstance(meta, dict) or (not meta.get("atelier_name") and not meta.get("atelier_trigger")):
-        raise ValueError("この画面で保存した LoRA だけ、呼び方を直せます。")
+        raise ValueError("この画面で保存した LoRA だけ、呼び方を足せます。")
+    current = lora_trigger_list(meta)
+    learned = clean_trigger_word(str(meta.get("atelier_trigger") or ""))
+    extras = [item for item in current if item.lower() != learned.lower()]
+    key = text.lower()
+    if remove:
+        if learned and key == learned.lower():
+            raise ValueError("学習で覚えた呼び方は、ここからは外せません。")
+        if key not in {item.lower() for item in extras}:
+            raise ValueError("その呼び方は、この LoRA にありません。")
+        extras = [item for item in extras if item.lower() != key]
+    else:
+        if key in {item.lower() for item in current}:
+            raise ValueError("その呼び方は、すでにこの LoRA にあります。")
+        if len(extras) >= 20:
+            raise ValueError("あとから足せる呼び方は20個までです。")
+        extras.append(text)
     updated = {key: str(value) for key, value in meta.items()}
-    updated["atelier_trigger"] = text
+    updated["atelier_triggers"] = json.dumps(extras, ensure_ascii=False)
     from safetensors import safe_open
     from safetensors.torch import save_file
 
@@ -748,7 +795,8 @@ def set_lora_trigger(name: str, trigger: str) -> dict:
         temporary.unlink(missing_ok=True)
         raise ValueError("呼び方を保存できませんでした。生成が終わってから、もう一度押してください。") from error
     _private_word_cache["at"] = 0
-    return {"id": path.name, "trigger": text}
+    triggers = lora_trigger_list(updated)
+    return {"id": path.name, "trigger": triggers[0] if triggers else "", "triggers": triggers}
 
 
 def positive_prompt_in_png(path: Path) -> str:
@@ -946,9 +994,10 @@ def private_word_owners() -> dict[str, set[str]]:
                 continue
             header = read_safetensors_header(path)
             meta = header.get("__metadata__") if isinstance(header, dict) else None
-            trigger = meta.get("atelier_trigger") if isinstance(meta, dict) else ""
-            if trigger:
-                add_private_word(owners, path.name, str(trigger))
+            if isinstance(meta, dict):
+                for text in lora_trigger_list(meta):
+                    if text == clean_trigger_word(str(meta.get("atelier_trigger") or "")) or private_lora_token(text):
+                        add_private_word(owners, path.name, text)
     _private_word_cache["at"] = now
     _private_word_cache["owners"] = owners
     return owners
@@ -1426,8 +1475,8 @@ def lora_listing(name: str) -> dict:
     path = model_file("loras", name)
     header = read_safetensors_header(path) if path else None
     meta = header.get("__metadata__") if isinstance(header, dict) and isinstance(header.get("__metadata__"), dict) else {}
-    if not triggers and meta.get("atelier_trigger"):
-        triggers = [str(meta["atelier_trigger"])]
+    if not triggers:
+        triggers = lora_trigger_list(meta)
     if not catalog.get("name") and meta.get("atelier_name"):
         label = str(meta["atelier_name"])
     return {
@@ -2840,7 +2889,11 @@ class StudioHandler(BaseHTTPRequestHandler):
             if body is None:
                 return
             try:
-                saved = set_lora_trigger(str(body.get("id") or ""), str(body.get("trigger") or ""))
+                saved = change_lora_triggers(
+                    str(body.get("id") or ""),
+                    str(body.get("word") or body.get("trigger") or ""),
+                    remove=bool(body.get("remove")),
+                )
             except ValueError as error:
                 self.send_json({"error": str(error)}, status=400)
                 return

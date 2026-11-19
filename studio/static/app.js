@@ -2179,43 +2179,78 @@ function setupTraining() {
       frame.append(band, create);
       const title = document.createElement("strong");
       title.textContent = item.name || item.id;
+      const words = document.createElement("div");
+      words.className = "made-words";
       const editor = document.createElement("form");
-      editor.className = "made-trigger";
-      const label = document.createElement("span");
-      label.textContent = "呼び方";
+      editor.className = "made-add";
       const input = document.createElement("input");
       input.type = "text";
-      input.maxLength = 40;
-      input.value = item.trigger || "";
-      input.setAttribute("aria-label", `${item.name || "LoRA"} の呼び方`);
+      input.maxLength = 80;
+      input.placeholder = "足したい呼び方";
+      input.setAttribute("aria-label", `${item.name || "LoRA"} に足す呼び方`);
       const save = document.createElement("button");
       save.type = "submit";
-      save.textContent = "保存";
-      editor.append(label, input, save);
-      editor.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const trigger = input.value.trim();
-        if (!trigger) {
-          setTrainStatus("呼び方を入れてください。", true);
+      save.textContent = "登録";
+      const note = document.createElement("p");
+      note.className = "hint made-note";
+      note.textContent = "入力した内容が、登録で1つの呼び方になります。学習で覚えた最初の言葉は残ります。";
+      const paintWords = (list) => {
+        words.replaceChildren();
+        list.forEach((text, index) => {
+          const chip = document.createElement("span");
+          chip.className = "made-word";
+          const label = document.createElement("span");
+          label.textContent = text;
+          chip.append(label);
+          if (index > 0) {
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.textContent = "×";
+            remove.setAttribute("aria-label", "この呼び方を外す");
+            remove.addEventListener("click", () => sendTrigger(text, true));
+            chip.append(remove);
+          }
+          words.append(chip);
+        });
+      };
+      const sendTrigger = async (word, remove) => {
+        const text = String(word || "").trim();
+        if (!text) {
+          note.classList.add("is-error");
+          note.textContent = "足したい呼び方を入力してください。";
           return;
         }
         save.disabled = true;
+        note.classList.remove("is-error");
+        note.textContent = remove ? "外しています..." : "登録しています...";
         try {
-          const saved = await trainPost("/api/train/trigger", { id: item.id, trigger });
-          input.value = saved.trigger || trigger;
-          item.trigger = input.value;
-          setTrainStatus(`呼び方を「${input.value}」にしました。ボタンは、この言葉をプロンプトへ入れます。`, false);
+          const saved = await trainPost("/api/train/trigger", { id: item.id, word: text, remove: Boolean(remove) });
+          item.trigger = saved.trigger || item.trigger;
+          item.triggers = saved.triggers || [];
+          if (!remove) input.value = "";
+          paintWords(item.triggers);
+          note.classList.remove("is-error");
+          note.textContent = remove
+            ? "その呼び方を外しました。学習で覚えた言葉は残っています。"
+            : "1つの呼び方として足しました。生成画面でこの LoRA を選ぶと、ボタンが増えます。";
           const target = window.opener;
           if (target && !target.closed && typeof target.reloadLoraWords === "function") {
             target.reloadLoraWords();
           }
         } catch (error) {
-          setTrainStatus(error.message, true);
+          note.classList.add("is-error");
+          note.textContent = error.message;
         } finally {
           save.disabled = false;
         }
+      };
+      paintWords(item.triggers && item.triggers.length ? item.triggers : (item.trigger ? [item.trigger] : []));
+      editor.append(input, save);
+      editor.addEventListener("submit", (event) => {
+        event.preventDefault();
+        sendTrigger(input.value, false);
       });
-      card.append(frame, title, editor);
+      card.append(frame, title, words, editor, note);
       made.append(card);
     });
     if (!(data.loras || []).length) {
