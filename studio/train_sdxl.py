@@ -161,6 +161,21 @@ def render_preview(unet, vae, text_encoder, text_encoder_2, tokenizer, tokenizer
             torch.cuda.empty_cache()
 
 
+def training_scheduler(inference_scheduler):
+    """学習のノイズは DDPM で足す。描画用スケジューラの足し方を使うと、2周目から砂嵐になる。"""
+    from diffusers import DDPMScheduler
+
+    config = inference_scheduler.config
+    betas = inference_scheduler.betas.detach().float().cpu()
+    return DDPMScheduler(
+        num_train_timesteps=int(config.num_train_timesteps),
+        trained_betas=betas.tolist(),
+        prediction_type=str(config.prediction_type),
+        clip_sample=False,
+        timestep_spacing="leading",
+    )
+
+
 def save_lora(unet, names: list[str], output: Path, alpha: int, meta: dict) -> None:
     tensors = {}
     modules = dict(unet.named_modules())
@@ -230,6 +245,7 @@ def train(job_path: Path) -> None:
     tokenizer_2 = pipe.tokenizer_2
     scheduler = pipe.scheduler
     prediction_type = scheduler.config.prediction_type
+    train_noise = training_scheduler(scheduler)
     del pipe
     vae.to("cpu")
     text_encoder.to("cpu")
@@ -271,10 +287,10 @@ def train(job_path: Path) -> None:
             latent, embeds, pooled, time_ids = random.choice(cached)
             latent = latent.to(device=device, dtype=torch.float32)
             noise = torch.randn_like(latent)
-            timestep = torch.randint(0, scheduler.config.num_train_timesteps, (1,), device=device).long()
-            noisy = scheduler.add_noise(latent, noise, timestep)
+            timestep = torch.randint(0, train_noise.config.num_train_timesteps, (1,), device=device).long()
+            noisy = train_noise.add_noise(latent, noise, timestep)
             if prediction_type == "v_prediction":
-                target = scheduler.get_velocity(latent, noise, timestep)
+                target = train_noise.get_velocity(latent, noise, timestep)
             else:
                 target = noise
             with torch.autocast(device_type="cuda", dtype=dtype):
