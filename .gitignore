@@ -21,6 +21,7 @@ agent_token.txt
 datasets/
 studio/tagger/
 studio/lora_use_counts.json
+studio/lora_triggers.json
 
 # Tailscale の許可ルールの控え。この PC にだけ置く
 tailscale-policy-backup.json

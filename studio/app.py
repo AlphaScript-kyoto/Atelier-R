@@ -34,10 +34,12 @@ ROOT = Path(__file__).resolve().parents[1]
 COMFY_DIR = ROOT / "ComfyUI"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EXTRA_WORDS_PATH = Path(__file__).resolve().parent / "extra_words.txt"
+TRIGGER_EXTRAS_PATH = Path(__file__).resolve().parent / "lora_triggers.json"
 CARDS_PATH = Path(__file__).resolve().parent / "model_cards.json"
 PREVIEW_DIR = STATIC_DIR / "previews"
 _cards_lock = threading.Lock()
 _extra_words_lock = threading.Lock()
+_trigger_extras_lock = threading.Lock()
 AGENT_TOKEN_PATH = ROOT / "agent_token.txt"
 COMFY_URL = "http://127.0.0.1:8188"
 STUDIO_HOST = "127.0.0.1"
@@ -705,7 +707,7 @@ def atelier_loras() -> list[dict]:
                 meta = {}
             if not meta.get("atelier_name") and not meta.get("atelier_trigger"):
                 continue
-            triggers = lora_trigger_list(meta)
+            triggers = lora_trigger_list(meta, path.name)
             found.append({
                 "id": path.name,
                 "name": str(meta.get("atelier_name") or path.stem),
@@ -723,21 +725,57 @@ def clean_trigger_word(word: str) -> str:
     return " ".join(str(word or "").replace("\u3000", " ").split())
 
 
-def lora_trigger_list(meta: dict) -> list[str]:
+def read_trigger_extras() -> dict[str, list[str]]:
+    if not TRIGGER_EXTRAS_PATH.is_file():
+        return {}
+    try:
+        loaded = json.loads(TRIGGER_EXTRAS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    extras: dict[str, list[str]] = {}
+    for name, words in loaded.items():
+        if not isinstance(name, str) or not isinstance(words, list):
+            continue
+        cleaned = []
+        seen: set[str] = set()
+        for word in words:
+            text = clean_trigger_word(str(word or ""))
+            if not text or text.lower() in seen:
+                continue
+            seen.add(text.lower())
+            cleaned.append(text)
+            if len(cleaned) >= 20:
+                break
+        if cleaned:
+            extras[name] = cleaned
+    return extras
+
+
+def write_trigger_extras(extras: dict[str, list[str]]) -> None:
+    temporary = TRIGGER_EXTRAS_PATH.with_suffix(".json.saving")
+    temporary.write_text(json.dumps(extras, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, TRIGGER_EXTRAS_PATH)
+
+
+def lora_trigger_list(meta: dict, file_name: str = "") -> list[str]:
     """学習で覚えた呼び方を先頭に、あとから登録した呼び方を続ける。"""
     learned = clean_trigger_word(str(meta.get("atelier_trigger") or ""))
-    extras: list[str] = []
+    stored: list[str] = []
     raw = meta.get("atelier_triggers") if isinstance(meta, dict) else ""
-    parsed: list = []
     if isinstance(raw, str) and raw:
         try:
             loaded = json.loads(raw)
         except json.JSONDecodeError:
             loaded = []
         if isinstance(loaded, list):
-            parsed = loaded
+            stored.extend(str(item or "") for item in loaded)
+    if file_name:
+        stored.extend(read_trigger_extras().get(file_name, []))
+    extras: list[str] = []
     seen = {learned.lower()} if learned else set()
-    for item in parsed:
+    for item in stored:
         text = clean_trigger_word(str(item or ""))
         if not text or text.lower() in seen:
             continue
@@ -749,7 +787,7 @@ def lora_trigger_list(meta: dict) -> list[str]:
 
 
 def change_lora_triggers(name: str, word: str, *, remove: bool = False) -> dict:
-    """保存済み LoRA に、プロンプトへ入れる呼び方を1つ足す。学習した言葉は残す。"""
+    """保存済み LoRA に、プロンプトへ入れる呼び方を1つ足す。重みのファイルは書き換えない。"""
     text = clean_trigger_word(word)
     if not text or len(text) > 80 or any(char in text for char in "\r\n\\"):
         raise ValueError("呼び方は、1〜80文字で入力してください。")
@@ -762,40 +800,34 @@ def change_lora_triggers(name: str, word: str, *, remove: bool = False) -> dict:
     meta = header.get("__metadata__") if isinstance(header, dict) else None
     if not isinstance(meta, dict) or (not meta.get("atelier_name") and not meta.get("atelier_trigger")):
         raise ValueError("この画面で保存した LoRA だけ、呼び方を足せます。")
-    current = lora_trigger_list(meta)
     learned = clean_trigger_word(str(meta.get("atelier_trigger") or ""))
-    extras = [item for item in current if item.lower() != learned.lower()]
-    key = text.lower()
-    if remove:
-        if learned and key == learned.lower():
-            raise ValueError("学習で覚えた呼び方は、ここからは外せません。")
-        if key not in {item.lower() for item in extras}:
-            raise ValueError("その呼び方は、この LoRA にありません。")
-        extras = [item for item in extras if item.lower() != key]
-    else:
-        if key in {item.lower() for item in current}:
-            raise ValueError("その呼び方は、すでにこの LoRA にあります。")
-        if len(extras) >= 20:
-            raise ValueError("あとから足せる呼び方は20個までです。")
-        extras.append(text)
-    updated = {key: str(value) for key, value in meta.items()}
-    updated["atelier_triggers"] = json.dumps(extras, ensure_ascii=False)
-    from safetensors import safe_open
-    from safetensors.torch import save_file
-
-    tensors = {}
-    with safe_open(path, framework="pt", device="cpu") as handle:
-        for key in handle.keys():
-            tensors[key] = handle.get_tensor(key)
-    temporary = path.with_suffix(".trigger.saving")
-    try:
-        save_file(tensors, str(temporary), metadata=updated)
-        os.replace(temporary, path)
-    except OSError as error:
-        temporary.unlink(missing_ok=True)
-        raise ValueError("呼び方を保存できませんでした。生成が終わってから、もう一度押してください。") from error
+    with _trigger_extras_lock:
+        all_extras = read_trigger_extras()
+        current = lora_trigger_list(meta, path.name)
+        extras = [item for item in current if item.lower() != learned.lower()]
+        key = text.lower()
+        if remove:
+            if learned and key == learned.lower():
+                raise ValueError("学習で覚えた呼び方は、ここからは外せません。")
+            if key not in {item.lower() for item in extras}:
+                raise ValueError("その呼び方は、この LoRA にありません。")
+            extras = [item for item in extras if item.lower() != key]
+        else:
+            if key in {item.lower() for item in current}:
+                raise ValueError("その呼び方は、すでにこの LoRA にあります。")
+            if len(extras) >= 20:
+                raise ValueError("あとから足せる呼び方は20個までです。")
+            extras.append(text)
+        if extras:
+            all_extras[path.name] = extras
+        else:
+            all_extras.pop(path.name, None)
+        try:
+            write_trigger_extras(all_extras)
+        except OSError as error:
+            raise ValueError("呼び方を保存できませんでした。しばらくしてから、もう一度押してください。") from error
     _private_word_cache["at"] = 0
-    triggers = lora_trigger_list(updated)
+    triggers = lora_trigger_list(meta, path.name)
     return {"id": path.name, "trigger": triggers[0] if triggers else "", "triggers": triggers}
 
 
@@ -995,7 +1027,7 @@ def private_word_owners() -> dict[str, set[str]]:
             header = read_safetensors_header(path)
             meta = header.get("__metadata__") if isinstance(header, dict) else None
             if isinstance(meta, dict):
-                for text in lora_trigger_list(meta):
+                for text in lora_trigger_list(meta, path.name):
                     if text == clean_trigger_word(str(meta.get("atelier_trigger") or "")) or private_lora_token(text):
                         add_private_word(owners, path.name, text)
     _private_word_cache["at"] = now
@@ -1476,7 +1508,7 @@ def lora_listing(name: str) -> dict:
     header = read_safetensors_header(path) if path else None
     meta = header.get("__metadata__") if isinstance(header, dict) and isinstance(header.get("__metadata__"), dict) else {}
     if not triggers:
-        triggers = lora_trigger_list(meta)
+        triggers = lora_trigger_list(meta, name)
     if not catalog.get("name") and meta.get("atelier_name"):
         label = str(meta["atelier_name"])
     return {
