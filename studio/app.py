@@ -35,11 +35,13 @@ COMFY_DIR = ROOT / "ComfyUI"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EXTRA_WORDS_PATH = Path(__file__).resolve().parent / "extra_words.txt"
 TRIGGER_EXTRAS_PATH = Path(__file__).resolve().parent / "lora_triggers.json"
+LORA_NAMES_PATH = Path(__file__).resolve().parent / "lora_names.json"
 CARDS_PATH = Path(__file__).resolve().parent / "model_cards.json"
 PREVIEW_DIR = STATIC_DIR / "previews"
 _cards_lock = threading.Lock()
 _extra_words_lock = threading.Lock()
 _trigger_extras_lock = threading.Lock()
+_lora_names_lock = threading.Lock()
 AGENT_TOKEN_PATH = ROOT / "agent_token.txt"
 COMFY_URL = "http://127.0.0.1:8188"
 STUDIO_HOST = "127.0.0.1"
@@ -710,7 +712,7 @@ def atelier_loras() -> list[dict]:
             triggers = lora_trigger_list(meta, path.name)
             found.append({
                 "id": path.name,
-                "name": str(meta.get("atelier_name") or path.stem),
+                "name": lora_display_name(path.name, meta),
                 "trigger": triggers[0] if triggers else "",
                 "triggers": triggers,
                 "uses": counts.get(path.name, 0),
@@ -829,6 +831,59 @@ def change_lora_triggers(name: str, word: str, *, remove: bool = False) -> dict:
     _private_word_cache["at"] = 0
     triggers = lora_trigger_list(meta, path.name)
     return {"id": path.name, "trigger": triggers[0] if triggers else "", "triggers": triggers}
+
+
+def read_lora_names() -> dict[str, str]:
+    if not LORA_NAMES_PATH.is_file():
+        return {}
+    try:
+        loaded = json.loads(LORA_NAMES_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    names: dict[str, str] = {}
+    for file_name, label in loaded.items():
+        text = clean_trigger_word(str(label or ""))
+        if isinstance(file_name, str) and text:
+            names[file_name] = text
+    return names
+
+
+def lora_display_name(file_name: str, meta: dict | None) -> str:
+    override = read_lora_names().get(file_name, "")
+    if override:
+        return override
+    if isinstance(meta, dict) and meta.get("atelier_name"):
+        return str(meta["atelier_name"])
+    return Path(file_name).stem
+
+
+def set_lora_name(name: str, label: str) -> dict:
+    """画面に出す名前だけを変える。LoRA のファイル自体は書き換えない。"""
+    text = clean_trigger_word(label)
+    if not text or len(text) > 40 or any(char in text for char in "\r\n\\"):
+        raise ValueError("表示名は、1〜40文字にしてください。")
+    if Path(name).name != name or not name.lower().endswith(".safetensors"):
+        raise ValueError("LoRA が見つかりません。")
+    path = model_file("loras", name)
+    if path is None:
+        raise ValueError("LoRA が見つかりません。")
+    header = read_safetensors_header(path)
+    meta = header.get("__metadata__") if isinstance(header, dict) else None
+    if not isinstance(meta, dict) or (not meta.get("atelier_name") and not meta.get("atelier_trigger")):
+        raise ValueError("この画面で保存した LoRA だけ、表示名を直せます。")
+    with _lora_names_lock:
+        names = read_lora_names()
+        names[path.name] = text
+        temporary = LORA_NAMES_PATH.with_suffix(".json.saving")
+        try:
+            temporary.write_text(json.dumps(names, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.replace(temporary, LORA_NAMES_PATH)
+        except OSError as error:
+            temporary.unlink(missing_ok=True)
+            raise ValueError("表示名を保存できませんでした。しばらくしてから、もう一度押してください。") from error
+    return {"id": path.name, "name": text}
 
 
 def positive_prompt_in_png(path: Path) -> str:
@@ -1511,6 +1566,9 @@ def lora_listing(name: str) -> dict:
         triggers = lora_trigger_list(meta, name)
     if not catalog.get("name") and meta.get("atelier_name"):
         label = str(meta["atelier_name"])
+    override = read_lora_names().get(name, "")
+    if override and not catalog.get("name"):
+        label = override
     return {
         "name": label,
         "triggers": triggers,
@@ -2926,6 +2984,17 @@ class StudioHandler(BaseHTTPRequestHandler):
                     str(body.get("word") or body.get("trigger") or ""),
                     remove=bool(body.get("remove")),
                 )
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+                return
+            self.send_json(saved)
+            return
+        if path == "/api/train/name":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                saved = set_lora_name(str(body.get("id") or ""), str(body.get("name") or ""))
             except ValueError as error:
                 self.send_json({"error": str(error)}, status=400)
                 return

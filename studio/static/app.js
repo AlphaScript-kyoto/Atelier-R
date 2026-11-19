@@ -2177,8 +2177,18 @@ function setupTraining() {
       create.textContent = "創作";
       create.addEventListener("click", () => useMadeLora(item));
       frame.append(band, create);
-      const title = document.createElement("strong");
-      title.textContent = item.name || item.id;
+      const title = document.createElement("form");
+      title.className = "made-add";
+      const nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.maxLength = 40;
+      nameInput.value = item.name || "";
+      nameInput.placeholder = "表示名";
+      nameInput.setAttribute("aria-label", "表示名");
+      const nameSave = document.createElement("button");
+      nameSave.type = "submit";
+      nameSave.textContent = "保存";
+      title.append(nameInput, nameSave);
       const words = document.createElement("div");
       words.className = "made-words";
       const editor = document.createElement("form");
@@ -2249,6 +2259,34 @@ function setupTraining() {
       editor.addEventListener("submit", (event) => {
         event.preventDefault();
         sendTrigger(input.value, false);
+      });
+      title.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const next = nameInput.value.trim();
+        if (!next) {
+          note.classList.add("is-error");
+          note.textContent = "表示名を入力してください。";
+          return;
+        }
+        nameSave.disabled = true;
+        note.classList.remove("is-error");
+        note.textContent = "表示名を保存しています...";
+        try {
+          const saved = await trainPost("/api/train/name", { id: item.id, name: next });
+          item.name = saved.name || next;
+          nameInput.value = item.name;
+          note.classList.remove("is-error");
+          note.textContent = `表示名を「${item.name}」にしました。生成画面の一覧も、この名前になります。`;
+          const target = window.opener;
+          if (target && !target.closed && typeof target.reloadLoraWords === "function") {
+            target.reloadLoraWords();
+          }
+        } catch (error) {
+          note.classList.add("is-error");
+          note.textContent = error.message;
+        } finally {
+          nameSave.disabled = false;
+        }
       });
       card.append(frame, title, words, editor, note);
       made.append(card);
