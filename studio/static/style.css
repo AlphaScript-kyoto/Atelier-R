@@ -590,6 +590,23 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 }
 body.queue-open main { padding-bottom: min(36vh, 320px); }
 
+/* 横に広い画面だけ、待ち列を右端の空きへ出す。絵の上には重ねない。 */
+@media (min-width: 1500px) {
+  body.queue-open {
+    grid-template-columns: 72px 360px minmax(0, 1fr) 340px;
+  }
+  body.queue-open .progress-wrap {
+    grid-column: 4;
+    grid-row: 1 / -1;
+    align-self: start;
+    width: auto;
+    max-width: none;
+    max-height: calc(100vh - 96px);
+    margin: 76px 16px 16px 0;
+  }
+  body.queue-open main { padding-bottom: 48px; }
+}
+
 main {
   grid-column: 3;
   grid-row: 5;
