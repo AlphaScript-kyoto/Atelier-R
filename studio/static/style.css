@@ -1518,6 +1518,23 @@ body.lora-page #lora-home-close { display: none; }
   font-size: 12px;
   font-weight: 700;
 }
+.made-trigger {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+}
+.made-trigger input { margin: 0; padding: 6px 8px; }
+.made-trigger button {
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+  padding: 6px 10px;
+  cursor: pointer;
+}
 .task-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .task-table th, .task-table td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; }
 .task-wrap { overflow: auto; }

@@ -150,6 +150,15 @@ window.chooseLoraForCreate = function (id, name) {
   promptBox.focus();
   return true;
 };
+
+window.reloadLoraWords = async function () {
+  const response = await fetch("/api/options");
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ready || !Array.isArray(data.loras)) return;
+  loraInfo = data.loras.map((item) => ({ ...item, kind: "loras" }));
+  renderLoraStack();
+  paintTriggers();
+};
 promptBox.addEventListener("input", paintTriggers);
 
 function loraById(id) {
@@ -2128,7 +2137,43 @@ function setupTraining() {
       frame.append(band, create);
       const title = document.createElement("strong");
       title.textContent = item.name || item.id;
-      card.append(frame, title);
+      const editor = document.createElement("form");
+      editor.className = "made-trigger";
+      const label = document.createElement("span");
+      label.textContent = "呼び方";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.maxLength = 40;
+      input.value = item.trigger || "";
+      input.setAttribute("aria-label", `${item.name || "LoRA"} の呼び方`);
+      const save = document.createElement("button");
+      save.type = "submit";
+      save.textContent = "保存";
+      editor.append(label, input, save);
+      editor.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const trigger = input.value.trim();
+        if (!trigger) {
+          setTrainStatus("呼び方を入れてください。", true);
+          return;
+        }
+        save.disabled = true;
+        try {
+          const saved = await trainPost("/api/train/trigger", { id: item.id, trigger });
+          input.value = saved.trigger || trigger;
+          item.trigger = input.value;
+          setTrainStatus(`呼び方を「${input.value}」にしました。ボタンは、この言葉をプロンプトへ入れます。`, false);
+          const target = window.opener;
+          if (target && !target.closed && typeof target.reloadLoraWords === "function") {
+            target.reloadLoraWords();
+          }
+        } catch (error) {
+          setTrainStatus(error.message, true);
+        } finally {
+          save.disabled = false;
+        }
+      });
+      card.append(frame, title, editor);
       made.append(card);
     });
     if (!(data.loras || []).length) {

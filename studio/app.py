@@ -660,6 +660,40 @@ def atelier_loras() -> list[dict]:
     return found
 
 
+def set_lora_trigger(name: str, trigger: str) -> dict:
+    """保存済み LoRA の、プロンプトへ入れる呼び方だけを書き換える。"""
+    text = " ".join(str(trigger or "").split())
+    if not text or len(text) > 40 or any(char in text for char in "\r\n,\\"):
+        raise ValueError("呼び方は、カンマのない 1〜40 文字にしてください。")
+    if Path(name).name != name or not name.lower().endswith(".safetensors"):
+        raise ValueError("LoRA が見つかりません。")
+    path = model_file("loras", name)
+    if path is None:
+        raise ValueError("LoRA が見つかりません。")
+    header = read_safetensors_header(path)
+    meta = header.get("__metadata__") if isinstance(header, dict) else None
+    if not isinstance(meta, dict) or (not meta.get("atelier_name") and not meta.get("atelier_trigger")):
+        raise ValueError("この画面で保存した LoRA だけ、呼び方を直せます。")
+    updated = {key: str(value) for key, value in meta.items()}
+    updated["atelier_trigger"] = text
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+
+    tensors = {}
+    with safe_open(path, framework="pt", device="cpu") as handle:
+        for key in handle.keys():
+            tensors[key] = handle.get_tensor(key)
+    temporary = path.with_suffix(".trigger.saving")
+    try:
+        save_file(tensors, str(temporary), metadata=updated)
+        os.replace(temporary, path)
+    except OSError as error:
+        temporary.unlink(missing_ok=True)
+        raise ValueError("呼び方を保存できませんでした。生成が終わってから、もう一度押してください。") from error
+    _private_word_cache["at"] = 0
+    return {"id": path.name, "trigger": text}
+
+
 def positive_prompt_in_png(path: Path) -> str:
     try:
         with path.open("rb") as handle:
@@ -2725,6 +2759,17 @@ class StudioHandler(BaseHTTPRequestHandler):
                     action=str(body.get("action") or ""),
                     tag=str(body.get("tag") or ""),
                 )
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+                return
+            self.send_json(saved)
+            return
+        if path == "/api/train/trigger":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                saved = set_lora_trigger(str(body.get("id") or ""), str(body.get("trigger") or ""))
             except ValueError as error:
                 self.send_json({"error": str(error)}, status=400)
                 return
