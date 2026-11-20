@@ -23,6 +23,7 @@ const detailFacts = document.querySelector("#detail-facts");
 const detailPrompt = document.querySelector("#detail-prompt");
 
 const NAMED_SIZES = {
+  note: [1280, 670],
   fhd: [1920, 1080],
   wqhd: [2560, 1440],
   "4k": [3840, 2160],
@@ -779,10 +780,15 @@ function paintOrientation(value) {
 function applyNamedSize() {
   const pair = NAMED_SIZES[resolutionSelect.value];
   if (!pair) return;
+  if (resolutionSelect.value === "note") paintOrientation("landscape");
   const [wide, tall] = pair;
   applyingNamedSize = true;
-  customWidth.value = orientation === "portrait" ? tall : wide;
-  customHeight.value = orientation === "portrait" ? wide : tall;
+  const width = orientation === "portrait" ? tall : wide;
+  const height = orientation === "portrait" ? wide : tall;
+  customWidth.value = String(width);
+  customHeight.value = String(height);
+  customWidth.step = width % 8 === 0 ? "8" : "1";
+  customHeight.step = height % 8 === 0 ? "8" : "1";
   useCustomRatio();
   applyingNamedSize = false;
 }
@@ -847,6 +853,7 @@ function snapSize(input) {
   if (!Number.isFinite(number)) return;
   number = Math.min(7680, Math.max(512, number));
   input.value = String(number);
+  input.step = "8";
 }
 
 customWidth.addEventListener("change", () => snapSize(customWidth));

@@ -2445,7 +2445,9 @@ def image_size(body: dict) -> tuple[int, int]:
             height = int(body.get("height"))
         except (TypeError, ValueError) as error:
             raise ValueError("カスタムの幅と高さを数字で入れてください。") from error
-        if width % 8 or height % 8 or not (MIN_SIDE <= width <= MAX_SIDE and MIN_SIDE <= height <= MAX_SIDE):
+        in_range = MIN_SIDE <= width <= MAX_SIDE and MIN_SIDE <= height <= MAX_SIDE
+        note_eyecatch = (width, height) in {(1280, 670), (670, 1280)}
+        if not in_range or ((width % 8 or height % 8) and not note_eyecatch):
             raise ValueError("幅と高さは 512〜7680 で、8 の倍数にしてください。")
         if width * height > MAX_PIXELS:
             raise ValueError("8K（7680×4320）より大きいサイズは指定できません。")
@@ -2459,6 +2461,9 @@ def image_size(body: dict) -> tuple[int, int]:
 def sampling_size(width: int, height: int) -> tuple[int, int]:
     long_side = max(width, height)
     if long_side <= DIRECT_LONG_SIDE:
+        # noteアイキャッチの 670 のように、8 の倍数でない辺は一番近い倍数で描いてから戻す。
+        if width % 8 or height % 8:
+            return max(64, int(round(width / 8)) * 8), max(64, int(round(height / 8)) * 8)
         return width, height
     scale = DIRECT_LONG_SIDE / long_side
     draw_width = max(64, int(round(width * scale / 8)) * 8)
