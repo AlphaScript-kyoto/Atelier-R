@@ -103,7 +103,7 @@ def inject_lora(unet, rank: int, alpha: int) -> list[str]:
     return names
 
 
-PREVIEW_NEGATIVE = "worst quality, low quality, bad anatomy, bad hands, missing fingers, extra digits, text, watermark, blurry"
+PREVIEW_NEGATIVE = "worst quality, low quality, bad anatomy, bad hands, missing fingers, extra digits, text, watermark, blurry, empty eyes, dull eyes, flat color"
 
 
 def preview_caption(trigger: str, prompt: str) -> str:
