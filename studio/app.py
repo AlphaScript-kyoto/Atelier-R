@@ -253,6 +253,7 @@ RATIOS = [
     {"id": "4:5", "label": "4:5", "width": 896, "height": 1120, "column": "portrait"},
     {"id": "5:4", "label": "5:4", "width": 1120, "height": 896, "column": "landscape"},
     {"id": "1:1", "label": "1:1", "width": 1024, "height": 1024, "column": "full"},
+    {"id": "note", "label": "noteアイキャッチ", "width": 1280, "height": 670, "column": "full"},
     {"id": "custom", "label": "カスタム", "width": 0, "height": 0, "column": "full"},
 ]
 RATIO_BY_ID = {item["id"]: item for item in RATIOS if item["id"] != "custom"}

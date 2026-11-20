@@ -744,8 +744,18 @@ function choose(container, value, setter) {
   setter(value);
 }
 
+function isNoteSize(width, height) {
+  return (width === 1280 && height === 670) || (width === 670 && height === 1280);
+}
+
 function renderRatios(items, options = {}) {
   if (items && items.some((item) => item.width)) ratioItems = items;
+  if (!ratioItems.some((item) => item.id === "note")) {
+    const note = { id: "note", label: "noteアイキャッチ", width: 1280, height: 670, column: "full" };
+    const customIndex = ratioItems.findIndex((item) => item.id === "custom");
+    if (customIndex >= 0) ratioItems.splice(customIndex, 0, note);
+    else ratioItems.push(note);
+  }
   ratioBox.replaceChildren();
   ratioItems.forEach((item) => {
     const button = document.createElement("button");
@@ -763,9 +773,10 @@ function renderRatios(items, options = {}) {
 function selectRatio(id) {
   choose(ratioBox, id, (value) => { selectedRatio = value; });
   applyRatioSize(id);
-  resolutionSelect.value = "";
+  resolutionSelect.value = id === "note" ? "note" : "";
   const item = ratioItems.find((entry) => entry.id === id);
-  if (item && (item.column === "portrait" || item.column === "landscape")) {
+  if (id === "note") paintOrientation("landscape");
+  else if (item && (item.column === "portrait" || item.column === "landscape")) {
     paintOrientation(item.column);
   }
 }
@@ -780,15 +791,20 @@ function paintOrientation(value) {
 function applyNamedSize() {
   const pair = NAMED_SIZES[resolutionSelect.value];
   if (!pair) return;
-  if (resolutionSelect.value === "note") paintOrientation("landscape");
+  if (resolutionSelect.value === "note") {
+    applyingNamedSize = true;
+    selectRatio("note");
+    applyingNamedSize = false;
+    return;
+  }
   const [wide, tall] = pair;
   applyingNamedSize = true;
   const width = orientation === "portrait" ? tall : wide;
   const height = orientation === "portrait" ? wide : tall;
-  customWidth.value = String(width);
-  customHeight.value = String(height);
   customWidth.step = width % 8 === 0 ? "8" : "1";
   customHeight.step = height % 8 === 0 ? "8" : "1";
+  customWidth.value = String(width);
+  customHeight.value = String(height);
   useCustomRatio();
   applyingNamedSize = false;
 }
@@ -814,6 +830,9 @@ resolutionSelect.addEventListener("change", applyNamedSize);
 function applyRatioSize(id) {
   const item = ratioItems.find((entry) => entry.id === id);
   if (!item || !item.width || !item.height) return;
+  const note = id === "note" || isNoteSize(item.width, item.height);
+  customWidth.step = note || item.width % 8 ? "1" : "8";
+  customHeight.step = note || item.height % 8 ? "1" : "8";
   customWidth.value = item.width;
   customHeight.value = item.height;
 }
@@ -849,6 +868,13 @@ customHeight.addEventListener("input", () => {
 
 function snapSize(input) {
   if (input.value === "") return;
+  const width = Number(customWidth.value);
+  const height = Number(customHeight.value);
+  if (isNoteSize(width, height)) {
+    customWidth.step = "1";
+    customHeight.step = "1";
+    return;
+  }
   let number = Math.round(Number(input.value) / 8) * 8;
   if (!Number.isFinite(number)) return;
   number = Math.min(7680, Math.max(512, number));
@@ -1187,7 +1213,7 @@ form.addEventListener("submit", async (event) => {
     loras: settings.loras.map((item) => ({ id: item.id, strength: item.strength })),
     prompt: settings.prompt,
     negative: settings.negative,
-    ratio: settings.ratio,
+    ratio: settings.ratio === "note" ? "custom" : settings.ratio,
     width: settings.width,
     height: settings.height,
     count: settings.count,
@@ -1673,7 +1699,7 @@ function runFromDetail(mode) {
     loras: (settings.loras || []).map((item) => ({ id: item.id, strength: item.strength })),
     prompt: settings.prompt,
     negative: settings.negative,
-    ratio: settings.ratio || "custom",
+    ratio: settings.ratio === "note" ? "custom" : (settings.ratio || "custom"),
     width: settings.width,
     height: settings.height,
     source,
