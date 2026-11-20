@@ -9,7 +9,8 @@ const statusLine = document.querySelector("#status");
 const form = document.querySelector("#composer");
 const promptBox = document.querySelector("#prompt");
 const negativeBox = document.querySelector("#negative");
-const DEFAULT_NEGATIVE = negativeBox.value;
+const DEFAULT_NEGATIVE = "worst quality, low quality, bad anatomy, bad hands, missing fingers, extra digits, text, watermark, blurry, empty eyes, dull eyes, flat color";
+negativeBox.value = DEFAULT_NEGATIVE;
 const generateButton = document.querySelector("#generate");
 const randomButton = document.querySelector("#random-prompt");
 const gallery = document.querySelector("#gallery");
@@ -696,7 +697,7 @@ function loraNegativeSection(id, name, saved) {
   save.textContent = "このLoRAに保存";
   const note = document.createElement("p");
   note.className = "hint";
-  note.textContent = "保存すると、このLoRAを選んだときに下の避けたい内容へ入ります。空なら、いつもの文です。";
+  note.textContent = "LoRA を1つだけ選んでいるときに、この文章が下の避けたい内容になります。2つ以上のときは、いつもの文です。空で保存すると、その1つのときもいつもの文です。";
   save.addEventListener("click", async () => {
     save.disabled = true;
     try {
@@ -725,16 +726,14 @@ function loraNegativeSection(id, name, saved) {
 }
 
 function applyLoraNegative() {
-  const parts = [];
-  selectedLoras.forEach((item) => {
-    const info = loraById(item.id);
-    const text = info && info.negative ? info.negative.trim() : "";
-    if (text && !parts.includes(text)) parts.push(text);
-  });
-  const key = parts.join("\u0001");
+  const only = selectedLoras.length === 1 ? loraById(selectedLoras[0].id) : null;
+  const text = only && only.negative ? only.negative.trim() : "";
+  const key = selectedLoras.length === 1
+    ? `one\u0001${selectedLoras[0].id}\u0001${text}`
+    : `many\u0001${selectedLoras.map((item) => item.id).join(",")}`;
   if (key === appliedLoraNegativeKey) return;
   appliedLoraNegativeKey = key;
-  negativeBox.value = parts.length ? parts.join(", ") : DEFAULT_NEGATIVE;
+  negativeBox.value = text || DEFAULT_NEGATIVE;
 }
 
 function choose(container, value, setter) {
@@ -2457,14 +2456,43 @@ function setupTraining() {
       removeLora.type = "button";
       removeLora.className = "made-delete";
       removeLora.textContent = "削除";
+      let armed = false;
+      let armTimer = 0;
+      const disarm = () => {
+        armed = false;
+        window.clearTimeout(armTimer);
+        removeLora.textContent = "削除";
+      };
       removeLora.addEventListener("click", async () => {
         const label = item.name || item.id;
-        if (!window.confirm(`「${label}」を削除します。ファイルも消えて、元には戻せません。`)) return;
+        if (!armed) {
+          armed = true;
+          removeLora.textContent = "本当に削除";
+          note.classList.remove("is-error");
+          note.textContent = `「${label}」を削除します。ファイルも消えて、元には戻せません。もう一度押すと消します。`;
+          window.clearTimeout(armTimer);
+          armTimer = window.setTimeout(() => {
+            if (!armed) return;
+            disarm();
+            note.textContent = "入力した内容が、登録で1つの呼び方になります。学習で覚えた最初の言葉は残ります。";
+          }, 6000);
+          return;
+        }
+        disarm();
         removeLora.disabled = true;
         note.classList.remove("is-error");
         note.textContent = "削除しています...";
         try {
-          await trainPost("/api/train/delete-lora", { id: item.id });
+          const response = await fetch("/api/train/delete-lora", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: item.id }),
+          });
+          const saved = await response.json().catch(() => ({}));
+          if (response.status === 404) {
+            throw new Error("削除の準備がまだです。Atelier R を終了して、もう一度起動してください。");
+          }
+          if (!response.ok) throw new Error(saved.error || "削除できませんでした。");
           card.remove();
           if (!made.querySelector(".made-card")) {
             const empty = document.createElement("p");

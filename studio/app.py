@@ -3001,8 +3001,12 @@ class StudioHandler(BaseHTTPRequestHandler):
         return self.request_host() == host and self.request_origin() == f"http://{host}"
 
     def from_studio_screen(self) -> bool:
+        """別のサイトからの操作は拒む。Origin を付けないスマホブラウザも、この画面なら受け付ける。"""
         host = self.request_host()
-        return host in studio_hosts() and self.request_origin() == f"http://{host}"
+        if host not in studio_hosts():
+            return False
+        origin = self.request_origin()
+        return origin in {"", "null", f"http://{host}"}
 
     def from_studio_get(self) -> bool:
         """GET は Origin が付かないブラウザがある。別のサイトからの Origin は拒む。"""
