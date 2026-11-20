@@ -9,6 +9,7 @@ const statusLine = document.querySelector("#status");
 const form = document.querySelector("#composer");
 const promptBox = document.querySelector("#prompt");
 const negativeBox = document.querySelector("#negative");
+const DEFAULT_NEGATIVE = negativeBox.value;
 const generateButton = document.querySelector("#generate");
 const randomButton = document.querySelector("#random-prompt");
 const gallery = document.querySelector("#gallery");
@@ -38,6 +39,7 @@ let ratioItems = [];
 let checkpointItems = [];
 let loraInfo = [];
 let selectedLoras = [];
+let appliedLoraNegativeKey = null;
 const MAX_LORAS = 5;
 let reuseSeed = null;
 let outputFolder = "";
@@ -651,6 +653,7 @@ function renderLoraStack() {
     number.addEventListener("input", () => setStrength(number.value));
     row.append(range, number);
     card.appendChild(row);
+    card.appendChild(loraNegativeSection(item.id, name, info && info.negative ? info.negative : ""));
 
     const triggers = info && info.triggers ? info.triggers : [];
     const shared = info && info.shared ? info.shared : [];
@@ -672,8 +675,66 @@ function renderLoraStack() {
     });
     loraStack.appendChild(card);
   });
+  applyLoraNegative();
   renderPicker();
   paintTriggers();
+}
+
+function loraNegativeSection(id, name, saved) {
+  const details = document.createElement("details");
+  details.className = "lora-negative";
+  const summary = document.createElement("summary");
+  summary.textContent = saved.trim() ? "避けたい内容（このLoRA用）" : "避けたい内容";
+  const box = document.createElement("textarea");
+  box.rows = 3;
+  box.value = saved;
+  box.placeholder = "空のまま保存すると、いつもの文になります";
+  box.setAttribute("aria-label", `${name} の避けたい内容`);
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "text-button";
+  save.textContent = "このLoRAに保存";
+  const note = document.createElement("p");
+  note.className = "hint";
+  note.textContent = "保存すると、このLoRAを選んだときに下の避けたい内容へ入ります。空なら、いつもの文です。";
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    try {
+      const response = await fetch("/api/lora-negative", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, negative: box.value }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "保存できませんでした。");
+      const info = loraById(id);
+      if (info) info.negative = data.negative || "";
+      appliedLoraNegativeKey = null;
+      renderLoraStack();
+      statusLine.classList.remove("error");
+      statusLine.textContent = data.negative
+        ? `${name} の避けたい内容を保存しました。`
+        : `${name} は、いつもの避けたい内容を使います。`;
+    } catch (error) {
+      note.textContent = error.message;
+      save.disabled = false;
+    }
+  });
+  details.append(summary, box, save, note);
+  return details;
+}
+
+function applyLoraNegative() {
+  const parts = [];
+  selectedLoras.forEach((item) => {
+    const info = loraById(item.id);
+    const text = info && info.negative ? info.negative.trim() : "";
+    if (text && !parts.includes(text)) parts.push(text);
+  });
+  const key = parts.join("\u0001");
+  if (key === appliedLoraNegativeKey) return;
+  appliedLoraNegativeKey = key;
+  negativeBox.value = parts.length ? parts.join(", ") : DEFAULT_NEGATIVE;
 }
 
 function choose(container, value, setter) {

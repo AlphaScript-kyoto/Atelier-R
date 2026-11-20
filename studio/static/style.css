@@ -411,6 +411,40 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   margin-top: 12px;
 }
 
+.lora-negative {
+  margin-top: 10px;
+  min-width: 0;
+}
+
+.lora-negative summary {
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.lora-negative textarea {
+  width: 100%;
+  max-width: 100%;
+  min-height: 72px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.lora-negative .text-button {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #1c2030;
+  color: var(--text);
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.lora-negative .hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
 #strength-number {
   width: 64px;
   padding: 8px;
@@ -1396,6 +1430,7 @@ figcaption {
 /* ---- 2026-11-16f: スマホでプロンプト入力時に画面が飛ぶ問題の修正 ---- */
 @media (max-width: 800px), (max-height: 520px) and (max-width: 1100px) and (hover: none) {
   #prompt, textarea, select, input { font-size: 16px; }
+  .lora-negative textarea { font-size: 16px; }
   body.sheet-open #composer {
     height: min(78vh, var(--vvh, 78vh));
     max-height: var(--vvh, 78vh);

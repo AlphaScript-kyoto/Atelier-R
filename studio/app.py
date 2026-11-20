@@ -894,6 +894,36 @@ def set_lora_name(name: str, label: str) -> dict:
     return {"id": path.name, "name": text}
 
 
+def set_lora_negative(name: str, negative: str) -> dict:
+    """LoRA を選んだときに使う避けたい内容。空なら、画面のいつもの文に戻す。"""
+    if Path(name).name != name or not name.lower().endswith(".safetensors"):
+        raise ValueError("LoRA が見つかりません。")
+    if model_file("loras", name) is None:
+        raise ValueError("LoRA が見つかりません。")
+    text = str(negative or "").replace("\r\n", "\n").replace("\r", "\n").strip()[:4000]
+    with _cards_lock:
+        cards = read_cards()
+        bucket = cards.setdefault("loras", {})
+        current = bucket.get(name) if isinstance(bucket.get(name), dict) else {}
+        stored = dict(current)
+        if text:
+            stored["negative"] = text
+        else:
+            stored.pop("negative", None)
+        if stored:
+            bucket[name] = stored
+        else:
+            bucket.pop(name, None)
+        temporary = CARDS_PATH.with_suffix(".json.saving")
+        try:
+            temporary.write_text(json.dumps(cards, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.replace(temporary, CARDS_PATH)
+        except OSError as error:
+            temporary.unlink(missing_ok=True)
+            raise ValueError("避けたい内容を保存できませんでした。しばらくしてから、もう一度押してください。") from error
+    return {"ok": True, "id": name, "negative": text}
+
+
 def delete_atelier_lora(name: str) -> dict:
     """この画面で保存した LoRA のファイルと、表示名、呼び方、サムネイルを消す。"""
     if Path(name).name != name or not name.lower().endswith(".safetensors"):
@@ -1236,10 +1266,14 @@ def card_fields(cards: dict, kind: str, model_id: str, fallback: str = "") -> di
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         url = ""
-    return {
+    fields = {
         "preview": public_preview(str(item.get("preview") or ""), fallback),
         "url": url,
     }
+    if kind == "loras":
+        # 空なら画面側が、いつもの避けたい内容を使う。
+        fields["negative"] = str(item.get("negative") or "").replace("\r", "").strip()[:4000]
+    return fields
 
 
 def parse_multipart(body: bytes, boundary: str) -> dict:
@@ -1328,7 +1362,11 @@ def save_model_card(kind: str, model_id: str, url: str, image: bytes | None) -> 
             preview_name = write_preview(kind, model_id, image)
         elif not preview_name and not url:
             raise ValueError("画像か、ダウンロード元のURLを入れてください。")
-        bucket[model_id] = {"preview": preview_name, "url": url}
+        # 避けたい内容など、サムネイル以外の項目は残す。
+        stored = dict(current)
+        stored["preview"] = preview_name
+        stored["url"] = url
+        bucket[model_id] = stored
         CARDS_PATH.write_text(json.dumps(cards, ensure_ascii=False, indent=2), encoding="utf-8")
     fallback = LORA_CATALOG.get(model_id, {}).get("preview", "") if kind == "loras" else ""
     shown = card_fields({"checkpoints": {}, "loras": {}, kind: {model_id: bucket[model_id]}}, kind, model_id, fallback)
@@ -3089,6 +3127,20 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return
             except RuntimeError:
                 self.send_json({"error": "モデル一覧を確認できませんでした。"}, status=502)
+                return
+            self.send_json(saved)
+            return
+        if path == "/api/lora-negative":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                saved = set_lora_negative(str(body.get("id") or ""), str(body.get("negative") or ""))
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+                return
+            except OSError:
+                self.send_json({"error": "避けたい内容を保存できませんでした。"}, status=500)
                 return
             self.send_json(saved)
             return
