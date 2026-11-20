@@ -82,7 +82,9 @@ Authorization: Bearer 合言葉
 | 進み具合 | `GET /api/agent/jobs/返ってきたprompt_id` |
 | できた絵 | `GET /api/agent/image?filename=ファイル名` |
 
-生成に送る JSON は、画面が内部で送っているものと同じです。`checkpoint`、`prompt`、`width`、`height`、`count` が基本です。LoRA を使うときは `loras` に `{"id","strength"}` を並べます。1 つだけなら、今までの `lora` と `strength` でも受け付けます。
+生成に送る JSON は、画面が内部で送っているものと同じです。`checkpoint`、`prompt`、`width`、`height`、`count` が基本です。LoRA を使うときは `loras` に `{"id","strength"}` を並べます。1 つだけなら、今までの `lora` と `strength` でも受け付けます。`strength` を省くと 1 です。画面で 0.8 にしているときは、0.8 を送ってください。
+
+`negative` を省いたときは、画面と同じ文を使います。LoRA を 1 つだけ選んでいて、その LoRA に避けたい内容が保存してあればその文、なければいつもの文です。`negative` に空文字を送ったときは、何も避けずに描きます。送った文があるときは、その文をそのまま使います。
 
 `mode` を省くと、これまでどおり白紙から描きます。できた絵から続けるときは、`source` に `{"filename","subfolder"}` を入れます。`mode` が `vary` のときは似た絵を3枚、`expand` のときは `pad` に `128`、`256`、`384` のどれかを入れて、外側の背景を描き足します。
 

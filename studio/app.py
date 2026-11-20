@@ -1717,6 +1717,11 @@ def list_options() -> dict:
 
 
 MAX_LORAS = 5
+# 画面の「避けたい内容」が空のときに入る文。studio/static/app.js の DEFAULT_NEGATIVE と同じ。
+SCREEN_NEGATIVE = (
+    "worst quality, low quality, bad anatomy, bad hands, missing fingers, extra digits, "
+    "text, watermark, blurry, empty eyes, dull eyes, flat color"
+)
 
 
 def selected_loras(body: dict, lora_ids: set[str]) -> list[tuple[str, float]]:
@@ -1748,6 +1753,18 @@ def selected_loras(body: dict, lora_ids: set[str]) -> list[tuple[str, float]]:
         seen.add(lora_id)
         chosen.append((lora_id, strength))
     return chosen
+
+
+def screen_negative(body: dict, loras: list[tuple[str, float]]) -> str:
+    """画面と同じ避けたい内容。送られてきた文があればそれを使い、無ければ LoRA 1つの保存文、それ以外はいつもの文。"""
+    if "negative" in body and body.get("negative") is not None:
+        return str(body.get("negative")).strip()[:4000]
+    if len(loras) == 1:
+        saved = ((read_cards().get("loras") or {}).get(loras[0][0]) or {})
+        text = str(saved.get("negative") or "").replace("\r", "").strip()
+        if text:
+            return text[:4000]
+    return SCREEN_NEGATIVE
 
 
 def align_down(value: float, minimum: int = 64) -> int:
@@ -1931,7 +1948,7 @@ def flux2_tuning(body: dict, entry: dict) -> dict:
     }
 
 
-def generation_inputs(body: dict, mode: str) -> dict:
+def generation_inputs(body: dict, mode: str, *, fill_negative: bool = False) -> dict:
     options = list_options()
     if not options["ready"]:
         raise ValueError("画像エンジンの準備がまだです。少し待ってからもう一度押してください。")
@@ -1956,7 +1973,13 @@ def generation_inputs(body: dict, mode: str) -> dict:
         raise ValueError("中央の欄に、描きたい内容を書いてください。")
     if len(prompt) > 4000:
         raise ValueError("文章が長すぎます。4000 文字以内にしてください。")
-    negative = str(body.get("negative") or "").strip()[:4000]
+    chosen_loras = selected_loras(body, lora_ids)
+    if fill_negative:
+        negative = screen_negative(body, chosen_loras)
+    else:
+        negative = str(body.get("negative") or "").strip()[:4000]
+    fitted = fitting_loras(chosen_loras, checkpoint_base, lora_bases)
+    skipped = skipped_loras(chosen_loras, checkpoint_base, lora_bases)
 
     if mode == "create":
         width, height = image_size(body)
@@ -1971,9 +1994,9 @@ def generation_inputs(body: dict, mode: str) -> dict:
         return {
             "checkpoint": checkpoint,
             "base": checkpoint_base,
-            "skipped_loras": skipped_loras(selected_loras(body, lora_ids), checkpoint_base, lora_bases),
+            "skipped_loras": skipped,
             **tuning,
-            "loras": fitting_loras(selected_loras(body, lora_ids), checkpoint_base, lora_bases),
+            "loras": fitted,
             "prompt": prompt,
             "negative": negative,
             "seed": read_seed(body, fresh=False),
@@ -1995,9 +2018,9 @@ def generation_inputs(body: dict, mode: str) -> dict:
         return {
             "checkpoint": checkpoint,
             "base": checkpoint_base,
-            "skipped_loras": skipped_loras(selected_loras(body, lora_ids), checkpoint_base, lora_bases),
+            "skipped_loras": skipped,
             **tuning,
-            "loras": fitting_loras(selected_loras(body, lora_ids), checkpoint_base, lora_bases),
+            "loras": fitted,
             "prompt": prompt,
             "negative": negative,
             "seed": read_seed(body, fresh=True),
@@ -2025,9 +2048,9 @@ def generation_inputs(body: dict, mode: str) -> dict:
     return {
         "checkpoint": checkpoint,
         "base": checkpoint_base,
-        "skipped_loras": skipped_loras(selected_loras(body, lora_ids), checkpoint_base, lora_bases),
+        "skipped_loras": skipped,
         **tuning,
-        "loras": fitting_loras(selected_loras(body, lora_ids), checkpoint_base, lora_bases),
+        "loras": fitted,
         "prompt": expanded_prompt,
         "negative": expanded_negative,
         "seed": read_seed(body, fresh=True),
@@ -2414,11 +2437,11 @@ def build_expand(spec: dict, prefix: str) -> dict:
     return graph
 
 
-def build_graph(body: dict, prefix: str = "studio", extras: dict | None = None) -> tuple[dict, int, tuple[int, int]]:
+def build_graph(body: dict, prefix: str = "studio", extras: dict | None = None, *, fill_negative: bool = False) -> tuple[dict, int, tuple[int, int]]:
     mode = str(body.get("mode") or "create")
     if mode not in {"create", "vary", "expand"}:
         raise ValueError("操作を確認してください。")
-    spec = generation_inputs(body, mode)
+    spec = generation_inputs(body, mode, fill_negative=fill_negative)
     if mode == "vary":
         graph = build_vary(spec, prefix)
     elif mode == "expand":
@@ -3377,7 +3400,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         try:
             prefix = "muse/studio" if for_muse else "studio"
             extras: dict = {}
-            graph, seed, size = build_graph(body, prefix, extras)
+            graph, seed, size = build_graph(body, prefix, extras, fill_negative=for_muse)
             result = comfy_json("POST", "/prompt", {"prompt": graph, "client_id": CLIENT_ID})
         except ValueError as error:
             if token:
