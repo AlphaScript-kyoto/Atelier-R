@@ -1368,7 +1368,7 @@ function showDetail() {
     fact("画像サイズ", `${settings.width}×${settings.height}`),
   ];
   if (settings.padLabel) facts.push(fact("足した幅", settings.padLabel));
-  detailFacts.replaceChildren(
+  const rows = [
     ...facts,
     fact("シード", String(settings.seed)),
     fact("サンプラー", "Euler a"),
@@ -1379,8 +1379,9 @@ function showDetail() {
     fact("LoRA", settings.loras && settings.loras.length
       ? settings.loras.map((item) => `${item.name}（強さ ${Number(item.strength).toFixed(1)}）`).join("、")
       : "なし"),
-    fact("保存先", image.path),
-  );
+  ];
+  if (onThisPc) rows.push(fact("保存先", image.path));
+  detailFacts.replaceChildren(...rows);
   detailPrompt.textContent = settings.negative
     ? `${settings.prompt}\n\n避けたい内容: ${settings.negative}`
     : settings.prompt;
@@ -1566,6 +1567,7 @@ selectButton.addEventListener("click", () => {
 deleteImagesButton.addEventListener("click", () => deleteFigures(selectedFigures));
 const onThisPc = location.hostname === "127.0.0.1" || location.hostname === "localhost";
 if (!onThisPc) {
+  document.querySelector(".save-note").hidden = true;
   openFolder.hidden = true;
   document.querySelector("#detail-folder").hidden = true;
 }
