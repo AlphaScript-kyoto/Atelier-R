@@ -2244,26 +2244,38 @@ function setupTraining() {
       board.append(card);
     });
     historyBoard.append(board);
-    const tableWrap = document.createElement("div");
-    tableWrap.className = "task-wrap";
-    const table = document.createElement("table");
-    table.className = "task-table";
-    table.innerHTML = "<thead><tr><th>トレーニング名</th><th>枚数</th><th>状態</th><th>繰り返し</th><th>エポック</th><th>基礎モデル</th><th>更新</th></tr></thead>";
-    const body = document.createElement("tbody");
+    const taskList = document.createElement("div");
+    taskList.className = "task-list";
     (data.tasks || []).forEach((item) => {
-      const row = document.createElement("tr");
-      [item.name || "無題", `${item.images || 0}枚`, stateLabel[item.state] || "未学習", item.repeats || "", item.epochs || "", item.checkpoint || "", whenText(item.finished || item.started)].forEach((text) => {
-        const cell = document.createElement("td");
-        cell.textContent = text;
-        row.append(cell);
-      });
-      row.style.cursor = "pointer";
-      row.addEventListener("click", () => openSavedTraining(item.dataset).catch((error) => setTrainStatus(error.message, true)));
-      body.append(row);
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "task-card";
+      const title = document.createElement("strong");
+      title.textContent = item.name || "無題";
+      const state = document.createElement("span");
+      state.className = "task-state";
+      state.textContent = stateLabel[item.state] || "未学習";
+      const meta = document.createElement("span");
+      meta.className = "task-meta";
+      meta.textContent = `${item.images || 0}枚 · 繰り返し ${item.repeats || "-"} · エポック ${item.epochs || "-"}`;
+      const model = document.createElement("span");
+      model.className = "task-meta";
+      model.textContent = item.checkpoint || "基礎モデルなし";
+      const when = document.createElement("span");
+      when.className = "task-meta";
+      when.textContent = whenText(item.finished || item.started) || "日時なし";
+      card.append(title, state, meta, model, when);
+      card.addEventListener("click", () => openSavedTraining(item.dataset).catch((error) => setTrainStatus(error.message, true)));
+      taskList.append(card);
     });
-    table.append(body);
-    tableWrap.append(table);
-    taskBoard.replaceChildren(tableWrap);
+    if (!(data.tasks || []).length) {
+      const empty = document.createElement("p");
+      empty.className = "hint";
+      empty.textContent = "まだ学習の記録はありません。";
+      taskBoard.replaceChildren(empty);
+    } else {
+      taskBoard.replaceChildren(taskList);
+    }
     const made = document.createElement("div");
     made.className = "made-grid";
     (data.loras || []).forEach((item) => {
@@ -2305,6 +2317,11 @@ function setupTraining() {
       title.append(nameInput, nameSave);
       const words = document.createElement("div");
       words.className = "made-words";
+      const fold = document.createElement("details");
+      fold.className = "made-triggers";
+      const summary = document.createElement("summary");
+      const summaryText = document.createElement("span");
+      summary.append(summaryText);
       const editor = document.createElement("form");
       editor.className = "made-add";
       const input = document.createElement("input");
@@ -2320,6 +2337,7 @@ function setupTraining() {
       note.textContent = "入力した内容が、登録で1つの呼び方になります。学習で覚えた最初の言葉は残ります。";
       const paintWords = (list) => {
         words.replaceChildren();
+        summaryText.textContent = list.length ? `呼び方（${list.length}）` : "呼び方";
         list.forEach((text, index) => {
           const chip = document.createElement("span");
           chip.className = "made-word";
@@ -2374,6 +2392,36 @@ function setupTraining() {
         event.preventDefault();
         sendTrigger(input.value, false);
       });
+      const removeLora = document.createElement("button");
+      removeLora.type = "button";
+      removeLora.className = "made-delete";
+      removeLora.textContent = "削除";
+      removeLora.addEventListener("click", async () => {
+        const label = item.name || item.id;
+        if (!window.confirm(`「${label}」を削除します。ファイルも消えて、元には戻せません。`)) return;
+        removeLora.disabled = true;
+        note.classList.remove("is-error");
+        note.textContent = "削除しています...";
+        try {
+          await trainPost("/api/train/delete-lora", { id: item.id });
+          card.remove();
+          if (!made.querySelector(".made-card")) {
+            const empty = document.createElement("p");
+            empty.className = "hint";
+            empty.textContent = "まだ、この画面で保存した LoRA はありません。";
+            madeBoard.replaceChildren(empty);
+          }
+          const target = window.opener;
+          if (target && !target.closed && typeof target.reloadLoraWords === "function") {
+            target.reloadLoraWords();
+          }
+        } catch (error) {
+          note.classList.add("is-error");
+          note.textContent = error.message;
+          removeLora.disabled = false;
+        }
+      });
+      fold.append(summary, words, editor);
       title.addEventListener("submit", async (event) => {
         event.preventDefault();
         const next = nameInput.value.trim();
@@ -2402,7 +2450,7 @@ function setupTraining() {
           nameSave.disabled = false;
         }
       });
-      card.append(frame, title, words, editor, note);
+      card.append(frame, title, removeLora, fold, note);
       made.append(card);
     });
     if (!(data.loras || []).length) {

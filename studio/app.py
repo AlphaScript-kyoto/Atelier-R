@@ -894,6 +894,50 @@ def set_lora_name(name: str, label: str) -> dict:
     return {"id": path.name, "name": text}
 
 
+def delete_atelier_lora(name: str) -> dict:
+    """この画面で保存した LoRA のファイルと、表示名、呼び方、サムネイルを消す。"""
+    if Path(name).name != name or not name.lower().endswith(".safetensors"):
+        raise ValueError("LoRA が見つかりません。")
+    path = model_file("loras", name)
+    if path is None:
+        raise ValueError("LoRA が見つかりません。")
+    header = read_safetensors_header(path)
+    meta = header.get("__metadata__") if isinstance(header, dict) else None
+    if not isinstance(meta, dict) or (not meta.get("atelier_name") and not meta.get("atelier_trigger")):
+        raise ValueError("この画面で保存した LoRA だけ削除できます。")
+    try:
+        path.unlink()
+    except OSError as error:
+        raise ValueError("ファイルを削除できませんでした。学習中なら、終わってからもう一度押してください。") from error
+    try:
+        with _lora_names_lock:
+            names = read_lora_names()
+            if names.pop(path.name, None) is not None:
+                temporary = LORA_NAMES_PATH.with_suffix(".json.saving")
+                temporary.write_text(json.dumps(names, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                os.replace(temporary, LORA_NAMES_PATH)
+        with _trigger_extras_lock:
+            extras = read_trigger_extras()
+            if path.name in extras:
+                extras.pop(path.name, None)
+                write_trigger_extras(extras)
+        with _cards_lock:
+            cards = read_cards()
+            bucket = cards.setdefault("loras", {})
+            current = bucket.pop(path.name, None) if isinstance(bucket, dict) else None
+            cards["loras"] = bucket if isinstance(bucket, dict) else {}
+            CARDS_PATH.write_text(json.dumps(cards, ensure_ascii=False, indent=2), encoding="utf-8")
+        if isinstance(current, dict):
+            preview_name = Path(str(current.get("preview") or "")).name
+            preview = (PREVIEW_DIR / preview_name).resolve()
+            if preview_name and preview.is_file() and preview.parent == PREVIEW_DIR.resolve():
+                preview.unlink(missing_ok=True)
+    except OSError:
+        pass
+    _private_word_cache["at"] = 0
+    return {"ok": True, "id": path.name}
+
+
 def positive_prompt_in_png(path: Path) -> str:
     try:
         with path.open("rb") as handle:
@@ -3156,6 +3200,17 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return
             try:
                 saved = set_lora_name(str(body.get("id") or ""), str(body.get("name") or ""))
+            except ValueError as error:
+                self.send_json({"error": str(error)}, status=400)
+                return
+            self.send_json(saved)
+            return
+        if path == "/api/train/delete-lora":
+            body = self.read_json_object()
+            if body is None:
+                return
+            try:
+                saved = delete_atelier_lora(str(body.get("id") or ""))
             except ValueError as error:
                 self.send_json({"error": str(error)}, status=400)
                 return
