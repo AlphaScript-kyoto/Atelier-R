@@ -1004,7 +1004,7 @@ figcaption {
 
 .error { color: #ffb4b4; }
 
-@media (max-width: 800px) {
+@media (max-width: 800px), (max-height: 520px) and (max-width: 1100px) and (hover: none) {
   #select-tools {
     top: calc(8px + env(safe-area-inset-top));
     right: 12px;
@@ -1016,34 +1016,58 @@ figcaption {
     height: auto;
     min-height: 100vh;
     overflow: auto;
-    padding-left: 64px;
-    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+    padding-left: 0;
+    padding-bottom: calc(64px + env(safe-area-inset-bottom));
+  }
+  /* 左の細い帯は、上のボタン1つに畳む。絵の横幅をその分だけ戻す。 */
+  body::before {
+    content: "";
+    position: fixed;
+    z-index: 18;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: calc(56px + env(safe-area-inset-top));
+    background: var(--bg);
+    pointer-events: none;
   }
   #tool-rail {
     position: fixed;
-    z-index: 26;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: 64px;
+    z-index: 20;
+    top: calc(8px + env(safe-area-inset-top));
+    left: 12px;
+    bottom: auto;
+    width: auto;
+    height: auto;
+    flex-direction: row;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  #train-open {
+    width: 44px;
+    min-height: 44px;
+    border-radius: 14px;
+    background: #1c2030;
+    border: 1px solid var(--line);
   }
   main {
     display: flex;
     flex-direction: column;
-    min-height: calc(100vh - 76px - env(safe-area-inset-bottom));
-    padding: 16px 12px 24px;
+    min-height: calc(100vh - 64px - env(safe-area-inset-bottom));
+    padding: calc(60px + env(safe-area-inset-top)) 12px 24px;
     overflow: visible;
   }
   #composer {
     display: flex;
     position: fixed;
-    left: 64px;
+    left: 0;
     right: 0;
     bottom: 0;
     z-index: 25;
     align-items: center;
     gap: 8px;
-    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
     background: #171a22;
     border-top: 1px solid var(--line);
   }
@@ -1074,7 +1098,7 @@ figcaption {
     position: fixed;
     left: 12px;
     right: 12px;
-    bottom: calc(72px + env(safe-area-inset-bottom));
+    bottom: calc(64px + env(safe-area-inset-bottom));
     max-height: 28vh;
     overflow: auto;
     margin: 0;
@@ -1158,7 +1182,7 @@ figcaption {
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  .session-row { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .session-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .session-row img { aspect-ratio: 2 / 3; object-fit: cover; height: 100%; }
   figcaption { display: none; }
   .reuse-prompt { display: inline-block; }
@@ -1317,7 +1341,7 @@ figcaption {
 }
 
 /* ---- 2026-11-16e: スマホでピッカーが下で見切れ・上に隙間・スクロール不可の修正 ---- */
-@media (max-width: 800px) {
+@media (max-width: 800px), (max-height: 520px) and (max-width: 1100px) and (hover: none) {
   dialog#picker[open] {
     position: fixed;
     inset: 0;
@@ -1349,7 +1373,7 @@ figcaption {
 }
 
 /* ---- 2026-11-16f: スマホでプロンプト入力時に画面が飛ぶ問題の修正 ---- */
-@media (max-width: 800px) {
+@media (max-width: 800px), (max-height: 520px) and (max-width: 1100px) and (hover: none) {
   #prompt, textarea, select, input { font-size: 16px; }
   body.sheet-open #composer {
     height: min(78vh, var(--vvh, 78vh));
@@ -1367,7 +1391,7 @@ figcaption {
 }
 
 /* ---- 2026-11-16g: スマホの画像詳細で条件パネルに届かない問題の修正 ---- */
-@media (max-width: 800px) {
+@media (max-width: 800px), (max-height: 520px) and (max-width: 1100px) and (hover: none) {
   dialog#detail[open] {
     position: fixed;
     inset: 0;
@@ -1382,44 +1406,41 @@ figcaption {
   }
   dialog#detail .detail-layout,
   dialog#detail.landscape .detail-layout {
-    display: flex;
-    flex-direction: column;
+    position: relative;
+    display: block;
     width: 100%;
     height: 100%;
     max-height: none;
-    overflow-x: hidden;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
-    touch-action: pan-y;
+    overflow: hidden;
     border-radius: 0;
   }
   dialog#detail .detail-stage {
-    flex: none;
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: auto;
-    min-height: 100%;
-    box-sizing: border-box;
-    padding-top: calc(56px + env(safe-area-inset-top));
+    min-height: 0;
+    padding: 0;
   }
   dialog#detail #detail-image,
   dialog#detail.landscape #detail-image {
     width: auto;
     height: auto;
     max-width: 100%;
-    max-height: calc(var(--vvh, 100dvh) - 128px - env(safe-area-inset-top));
+    max-height: 100%;
   }
   dialog#detail .detail-toolbar {
-    left: 50%;
-    right: auto;
-    bottom: calc(16px + env(safe-area-inset-bottom));
-    transform: translateX(-50%);
+    left: auto;
+    right: 12px;
+    bottom: auto;
+    top: calc(12px + env(safe-area-inset-top));
+    transform: none;
   }
   dialog#detail #detail-info {
     width: auto;
-    min-width: 88px;
-    height: 44px;
-    padding: 0 16px;
+    min-width: 72px;
+    height: 40px;
+    padding: 0 14px;
     font-family: inherit;
     font-style: normal;
     font-size: 0;
@@ -1430,27 +1451,107 @@ figcaption {
     font-size: 15px;
     letter-spacing: 0.06em;
   }
-  dialog#detail #detail-info-layer,
+  dialog#detail #detail-info-layer { display: none; }
   dialog#detail.info-open #detail-info-layer {
     display: block;
-    position: static;
-    inset: auto;
-    z-index: auto;
+    position: fixed;
+    inset: 0;
+    z-index: 6;
   }
-  dialog#detail #detail-info-scrim,
-  dialog#detail.info-open #detail-info-scrim { display: none; }
+  dialog#detail #detail-info-scrim { display: none; }
+  dialog#detail.info-open #detail-info-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    border: 0;
+    background: rgba(0, 0, 0, 0.62);
+  }
   dialog#detail .detail-side,
   dialog#detail.info-open .detail-side {
-    position: static;
-    z-index: auto;
-    max-height: none;
+    position: absolute;
+    z-index: 1;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: min(74dvh, calc(var(--vvh, 100dvh) - 72px));
     margin: 0;
-    overflow: visible;
-    border-radius: 0;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    border-radius: 18px 18px 0 0;
     padding-bottom: calc(24px + env(safe-area-inset-bottom));
     background: #1b1f2a;
   }
-  dialog#detail #detail-close { display: none; }
+  dialog#detail #detail-close {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* 横画面は高さが足りないので、詳細は右から出し、入力欄と絵の列を詰める。 */
+@media (max-width: 800px) and (orientation: landscape) and (max-height: 520px),
+       (max-height: 520px) and (max-width: 1100px) and (hover: none) and (orientation: landscape) {
+  body { padding-bottom: calc(52px + env(safe-area-inset-bottom)); }
+  body::before { height: calc(48px + env(safe-area-inset-top)); }
+  main {
+    min-height: calc(100vh - 52px - env(safe-area-inset-bottom));
+    padding-top: calc(52px + env(safe-area-inset-top));
+  }
+  #composer { padding: 6px 10px calc(6px + env(safe-area-inset-bottom)); }
+  #prompt { height: 40px; min-height: 40px; max-height: 40px; }
+  body.sheet-open #composer {
+    top: var(--vvtop, 0px);
+    bottom: auto;
+    height: var(--vvh, 100dvh);
+    max-height: none;
+    border-radius: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  body.sheet-open #sheet-scroll {
+    flex: none;
+    height: auto;
+    overflow: visible;
+    padding-bottom: 72px;
+  }
+  body.sheet-open #prompt { min-height: 44px; max-height: 72px; }
+  body.sheet-open #extra-words,
+  body.sheet-open #negative-block { margin: 6px 0; }
+  body.sheet-open .actions {
+    position: sticky;
+    bottom: 0;
+    margin-top: 4px;
+    padding-top: 8px;
+    background: #171a22;
+  }
+  #random-prompt, #generate { width: 40px; height: 40px; }
+  .progress-wrap { bottom: calc(52px + env(safe-area-inset-bottom)); max-height: 24vh; }
+  .session-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  dialog#detail.info-open .detail-stage {
+    right: min(420px, 46vw);
+    width: auto;
+  }
+  dialog#detail.info-open .detail-side {
+    top: 0;
+    left: auto;
+    width: min(420px, 46vw);
+    height: 100%;
+    max-height: none;
+    border-radius: 16px 0 0 16px;
+  }
+  #tag-detail .tag-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 42vw);
+    align-items: start;
+  }
+  #tag-detail .tag-stage {
+    min-height: 0;
+    padding: 8px 44px;
+  }
+  #tag-detail .tag-stage img { max-height: calc(100dvh - 150px); }
 }
 
 .train-panel { height: min(920px, calc(100vh - 48px)); }
@@ -1543,6 +1644,9 @@ figcaption {
 }
 .train-crop { left: 6px; padding: 3px 6px; }
 .train-info { right: 6px; width: 26px; height: 26px; padding: 0; cursor: pointer; }
+@media (max-width: 800px), (max-height: 520px) and (max-width: 1100px) and (hover: none) {
+  .train-info { width: 44px; height: 44px; font-size: 16px; }
+}
 body.lora-page { display: block; background: var(--bg); }
 body.lora-page #tool-rail,
 body.lora-page #select-tools,
@@ -1913,7 +2017,7 @@ body.lora-watch #train-watch {
   line-height: 1.4;
 }
 .watch-empty { margin: 0; color: #8d8a9b; text-align: center; }
-@media (max-width: 800px) {
+@media (max-width: 800px), (max-height: 520px) and (max-width: 1100px) and (hover: none) {
   dialog#train[open] {
     position: fixed;
     inset: 0;

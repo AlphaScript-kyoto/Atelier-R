@@ -27,6 +27,9 @@ const NAMED_SIZES = {
   "8k": [7680, 4320],
 };
 
+/* 幅が狭い縦画面と、高さが足りない横画面の両方をスマホ扱いする。 */
+const phoneMedia = "(max-width: 800px), (max-height: 520px) and (max-width: 1100px) and (hover: none)";
+
 let selectedRatio = "9:16";
 let orientation = "portrait";
 let applyingNamedSize = false;
@@ -242,7 +245,7 @@ function removeWord(source, word) {
 function finishPrompt(value) {
   promptBox.value = value;
   paintTriggers();
-  if (window.matchMedia("(max-width: 800px)").matches) {
+  if (window.matchMedia(phoneMedia).matches) {
     promptBox.blur();
     setTimeout(() => promptBox.blur(), 0);
     return;
@@ -1287,7 +1290,7 @@ const detailIndexLabel = document.querySelector("#detail-index");
 let detailFigures = [];
 let detailIndex = 0;
 
-const phoneQuery = window.matchMedia("(max-width: 800px)");
+const phoneQuery = window.matchMedia(phoneMedia);
 const isPhone = () => phoneQuery.matches;
 let savedScroll = 0;
 
@@ -1398,13 +1401,15 @@ detailNext.addEventListener("click", () => moveDetail(1));
 document.querySelector("#detail-scrim").addEventListener("click", () => detail.close());
 document.querySelector("#detail-back").addEventListener("click", () => detail.close());
 document.querySelector("#detail-info").addEventListener("click", () => {
+  detail.classList.toggle("info-open");
+});
+document.querySelector("#detail-info-scrim").addEventListener("click", () => {
   if (isPhone()) {
-    document.querySelector(".detail-side").scrollIntoView({ block: "start", behavior: "smooth" });
+    detail.classList.remove("info-open");
     return;
   }
-  detail.classList.add("info-open");
+  detail.close();
 });
-document.querySelector("#detail-info-scrim").addEventListener("click", () => detail.close());
 document.querySelector(".detail-stage").addEventListener("click", (event) => {
   if (!isPhone() || event.target.closest("button, img")) return;
   detail.close();
