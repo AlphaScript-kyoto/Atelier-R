@@ -2038,14 +2038,47 @@ body.lora-watch #train-watch {
   .train-settings { grid-template-columns: 1fr; }
   #watch-meta { white-space: normal; }
   body.lora-watch #train-watch { height: auto; min-height: 100dvh; }
-  body.lora-page { padding: 0; height: 100dvh; overflow: hidden; }
-  body.lora-page #lora-home .picker-panel { height: 100dvh; max-height: 100dvh; }
-  body.lora-page #lora-home .train-body {
+  /* 一覧は内側の枠ではなく、画面ごと送る。内側だけだとスマホの指が届かない。 */
+  body.lora-page {
+    padding: 0;
+    height: auto;
+    min-height: 100dvh;
     overflow: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
     touch-action: pan-y;
   }
+  body.lora-page::before { content: none; }
+  body.lora-page dialog#lora-home[open] {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+  body.lora-page #lora-home .picker-panel {
+    height: auto;
+    min-height: 100dvh;
+    max-height: none;
+    overflow: visible;
+  }
+  body.lora-page #lora-home .picker-head {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    margin-bottom: 0;
+    padding-top: calc(8px + env(safe-area-inset-top));
+    padding-bottom: 8px;
+    background: #171a22;
+  }
+  body.lora-page #lora-home .train-body {
+    flex: none;
+    height: auto;
+    overflow: visible;
+    touch-action: auto;
+  }
+  body.lora-page .task-wrap { overflow: visible; }
   .history-grid, .made-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .history-new { min-height: 120px; font-size: 14px; }
   .made-card strong, .history-card strong { font-size: 13px; }
